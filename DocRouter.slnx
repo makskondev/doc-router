@@ -7,4 +7,7 @@
     <Project Path="src/DocRouter.Routes/DocRouter.Routes.csproj" />
     <Project Path="src/DocRouter.Steps/DocRouter.Steps.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DocRouter.Tests/DocRouter.Tests.csproj" />
+  </Folder>
 </Solution>

@@ -143,6 +143,45 @@ public sealed class SmbFileStore(IOptions<SmbOptions> options) : IFileStore
         throw new IOException($"Не удалось подобрать уникальное имя в {targetDir} для {targetFileName}");
     }, ct);
 
+    public Task<string> WriteUniqueAsync(byte[] content, string targetDir, string fileName, CancellationToken ct) => Task.Run(() =>
+    {
+        var dstDir = SmbPath.Parse(targetDir);
+        using var s = new SmbSession(dstDir, _o);
+
+        var name = fileName;
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var dst = dstDir.Combine(name);
+            var st = s.Store.CreateFile(out var h, out _, dst.Relative, AccessMask.GENERIC_WRITE | AccessMask.SYNCHRONIZE,
+                SmbAttrs.Normal, ShareAccess.None, CreateDisposition.FILE_CREATE, FileOpts, null);
+            if (st == NTStatus.STATUS_OBJECT_NAME_COLLISION) { name = WithSuffix(fileName, attempt); continue; }
+            Check(st, $"создание {dst.Full}");
+
+            try
+            {
+                var maxWrite = (int)s.MaxWrite;
+                for (var pos = 0; pos < content.Length;)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var chunk = content.AsSpan(pos, Math.Min(maxWrite, content.Length - pos)).ToArray();
+                    st = s.Store.WriteFile(out var written, h, pos, chunk);
+                    Check(st, $"запись {dst.Full}");
+                    pos += written;
+                }
+            }
+            catch
+            {
+                s.Store.CloseFile(h);
+                TryDelete(s, dst);
+                throw;
+            }
+            s.Store.CloseFile(h);
+            return dst.Full;
+        }
+        throw new IOException($"Не удалось подобрать уникальное имя в {targetDir} для {fileName}");
+    }, ct);
+
     public Task DeleteAsync(string path, CancellationToken ct) => Task.Run(() =>
     {
         var p = SmbPath.Parse(path);

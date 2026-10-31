@@ -36,7 +36,47 @@ public sealed class DocumentTypesOptions : Dictionary<string, DocumentTypeOption
 public sealed class SourcesOptions
 {
     public List<ViewOptions> Views { get; set; } = new();
+    public List<DirectorySourceOptions> Directories { get; set; } = new();
 }
+
+/// <summary>Каталог-источник: файл появился в Incoming типа → процесс. Один каталог = один тип.</summary>
+public sealed class DirectorySourceOptions
+{
+    public string DocType { get; set; } = "";
+    public bool RequireSignature { get; set; }                  // true: файл приходит сразу с подписью (<имя>.sig рядом)
+    public string SignatureSuffix { get; set; } = ".sig";
+    public TimeSpan MinAge { get; set; } = TimeSpan.FromMinutes(1);   // файл не меняется не менее этого времени (защита от недокопированных)
+    public List<string> Extensions { get; set; } = new();       // пусто = любые; иначе например [".pdf", ".xml"]
+}
+
+public sealed class StampLine
+{
+    public string Text { get; set; } = "";     // с подстановками {ПОЛЕ_ИЗ_VIEW} и {Date}
+    public float X { get; set; }
+    public float Y { get; set; }               // базовая линия текста, пиксели картинки
+    public float FontSize { get; set; } = 22;
+}
+
+public sealed class StampOptions
+{
+    public string? TemplatePath { get; set; }  // PNG-шаблон; нет — прозрачный холст Width×Height
+    public int Width { get; set; } = 400;
+    public int Height { get; set; } = 150;
+    public string FontFamily { get; set; } = "DejaVu Sans";
+    public string Color { get; set; } = "#1F3A93";
+    public string DateFormat { get; set; } = "dd.MM.yyyy";
+    public string? TimeZone { get; set; }      // например "Europe/Moscow"; пусто = локальная зона контейнера
+    public List<StampLine> Lines { get; set; } = new();
+    // Размещение на PDF (пункты, от левого верхнего угла)
+    public int Page { get; set; } = -1;        // <=0 — последняя страница
+    public double X { get; set; } = 30;
+    public double Y { get; set; } = 30;
+    public double WidthPt { get; set; } = 160;
+    public double HeightPt { get; set; } = 60;
+}
+
+/// <summary>Секция "Stamps": ключ = имя штампа (ссылается ApplyStamp.Stamp).</summary>
+public sealed class StampsOptions : Dictionary<string, StampOptions> { }
 
 public sealed class ViewOptions
 {

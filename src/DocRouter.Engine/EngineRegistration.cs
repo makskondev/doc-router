@@ -21,7 +21,9 @@ public static class EngineRegistration
         services.AddSingleton<RunFactory>();
         services.AddSingleton<RunClaimer>();
         services.AddSingleton<RunExecutor>();
+        services.AddSingleton(TimeProvider.System);
         services.AddSingleton<ISourcePoller, ViewSource>();
+        services.AddSingleton<ISourcePoller, DirectorySource>();
 
         services.AddHostedService<EngineWorker>();
         services.AddHostedService<SourcePollerWorker>();

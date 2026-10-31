@@ -10,20 +10,42 @@ public static class DocumentRoutes
     {
         var r = new RoutesBuilder();
 
-        // Сценарий B: запись во вью → файл → REST-подпись → проверка → подпись в БД → файл в результат
-        r.Template("RestSignFromView", t => t
-            .Step<FindFile>()
-            .Step<RestSign>()
+        // Общий «хвост»: проверка подписи → запись в БД → файл в результирующую папку
+        r.Template("VerifySaveArchive", t => t
             .Step<VerifySignature>()
             .Step<SaveSignature>()
             .Step<MoveFile>(s => s.To = Dir.Result));
 
-        // Типы документов (примеры — замените на реальные 16 типов)
-        r.For("Invoice").UseTemplate("RestSignFromView");
-        r.For("Act").UseTemplate("RestSignFromView");
+        // Сценарии B и C: подпись через REST (B — запись приходит из view, C — файл появился в каталоге; FindFile одинаков)
+        r.Template("RestSign", t => t
+            .Step<FindFile>()
+            .Step<RestSign>()
+            .UseTemplate("VerifySaveArchive"));
 
-        // Сценарии A/C/D добавляются новыми шагами (ApplyStamp, WaitForSignatureFile, ReadSignatureFile, DeleteFile)
-        // и новыми маршрутами рядом.
+        // --- Типы документов (примеры — замените на реальные) ---
+
+        // B: запись во view → REST-подпись
+        r.For("Invoice").UseTemplate("RestSign");
+        r.For("Act").UseTemplate("RestSign");
+
+        // A: запись во view → штамп → папка подписи → ждём файл + .sig → проверка → БД → результат → удалить .sig
+        r.For("Agreement")
+            .Step<FindFile>()
+            .Step<ApplyStamp>(s => s.Stamp = "agreement")        // у каждого типа свой штамп (секция Stamps)
+            .Step<WaitForSignatureFile>(s => s.Timeout = TimeSpan.FromHours(24))
+            .Step<ReadSignatureFile>()
+            .UseTemplate("VerifySaveArchive")
+            .Step<DeleteFile>();
+
+        // C: файл появился в каталоге → REST-подпись (источник: Sources:Directories, RequireSignature=false)
+        r.For("Letter").UseTemplate("RestSign");
+
+        // D: файл появился уже с подписью (<имя>.sig рядом) (источник: Sources:Directories, RequireSignature=true)
+        r.For("SignedLetter")
+            .Step<FindFile>()
+            .Step<ReadSignatureFile>()
+            .UseTemplate("VerifySaveArchive")
+            .Step<DeleteFile>();
 
         return r.Build();
     }

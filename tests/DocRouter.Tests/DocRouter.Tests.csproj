@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+    <PackageReference Include="xunit" Version="2.*" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.*" />
+    <ProjectReference Include="..\..\src\DocRouter.Core\DocRouter.Core.csproj" />
+    <ProjectReference Include="..\..\src\DocRouter.Engine\DocRouter.Engine.csproj" />
+    <ProjectReference Include="..\..\src\DocRouter.Steps\DocRouter.Steps.csproj" />
+    <ProjectReference Include="..\..\src\DocRouter.Routes\DocRouter.Routes.csproj" />
+    <ProjectReference Include="..\..\src\DocRouter.Infrastructure\DocRouter.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>
