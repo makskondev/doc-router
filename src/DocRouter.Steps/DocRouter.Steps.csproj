@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\DocRouter.Core\DocRouter.Core.csproj" />
+  </ItemGroup>
+</Project>

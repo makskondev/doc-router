@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="..\DocRouter.Core\DocRouter.Core.csproj" />
+    <ProjectReference Include="..\DocRouter.Engine\DocRouter.Engine.csproj" />
+    <ProjectReference Include="..\DocRouter.Steps\DocRouter.Steps.csproj" />
+    <ProjectReference Include="..\DocRouter.Routes\DocRouter.Routes.csproj" />
+    <ProjectReference Include="..\DocRouter.Infrastructure\DocRouter.Infrastructure.csproj" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.*">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="8.0.*" />
+  </ItemGroup>
+</Project>

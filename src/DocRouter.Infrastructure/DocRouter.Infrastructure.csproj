@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\DocRouter.Core\DocRouter.Core.csproj" />
+    <PackageReference Include="SMBLibrary" Version="1.5.*" />
+    <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.*" />
+    <PackageReference Include="MailKit" Version="4.*" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.*" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.0.*" />
+  </ItemGroup>
+</Project>

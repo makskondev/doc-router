@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\DocRouter.Core\DocRouter.Core.csproj" />
+    <ProjectReference Include="..\DocRouter.Steps\DocRouter.Steps.csproj" />
+  </ItemGroup>
+</Project>

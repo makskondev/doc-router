@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DocRouter.Core/DocRouter.Core.csproj" />
+    <Project Path="src/DocRouter.Engine/DocRouter.Engine.csproj" />
+    <Project Path="src/DocRouter.Host/DocRouter.Host.csproj" />
+    <Project Path="src/DocRouter.Infrastructure/DocRouter.Infrastructure.csproj" />
+    <Project Path="src/DocRouter.Routes/DocRouter.Routes.csproj" />
+    <Project Path="src/DocRouter.Steps/DocRouter.Steps.csproj" />
+  </Folder>
+</Solution>
