@@ -13,7 +13,7 @@ public class DirectorySelectorTests
     {
         var o = new DirectorySourceOptions { MinAge = TimeSpan.FromMinutes(1) };
         var res = DirectoryDocumentSelector.Select([F("a.pdf", 5), F("b.pdf", 0), F("a.pdf.sig", 5)], o, Now);
-        Assert.Equal(["a.pdf"], res.Select(x => x.Name));
+        Assert.Equal(new[] { "a.pdf" }, res.Select(x => x.Name));
     }
 
     [Fact]
@@ -22,7 +22,7 @@ public class DirectorySelectorTests
         var o = new DirectorySourceOptions { RequireSignature = true, MinAge = TimeSpan.FromMinutes(1) };
         var res = DirectoryDocumentSelector.Select(
             [F("ok.pdf", 5), F("ok.pdf.sig", 5), F("nosig.pdf", 5), F("young.pdf", 5), F("young.pdf.sig", 0)], o, Now);
-        Assert.Equal(["ok.pdf"], res.Select(x => x.Name));
+        Assert.Equal(new[] { "ok.pdf" }, res.Select(x => x.Name));
     }
 
     [Fact]
@@ -30,6 +30,6 @@ public class DirectorySelectorTests
     {
         var o = new DirectorySourceOptions { Extensions = [".pdf"], MinAge = TimeSpan.Zero };
         var res = DirectoryDocumentSelector.Select([F("a.PDF", 5), F("b.txt", 5)], o, Now);
-        Assert.Equal(["a.PDF"], res.Select(x => x.Name));
+        Assert.Equal(new[] { "a.PDF" }, res.Select(x => x.Name));
     }
 }

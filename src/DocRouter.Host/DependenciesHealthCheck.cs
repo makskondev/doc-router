@@ -4,9 +4,9 @@ using Microsoft.Extensions.Options;
 
 namespace DocRouter.Host;
 
-/// <summary>Диагностика внешних зависимостей. Не используется как readiness: сбой SMB/Oracle не должен выводить поды из балансировки.</summary>
+/// <summary>Диагностика внешних зависимостей. Не используется как readiness: сбой SMB/Oracle не должен перезапускать под.</summary>
 public sealed class DependenciesHealthCheck(
-    IFileStore files, IViewReader views, IOptions<DocumentTypesOptions> types) : IHealthCheck
+    IFileStore files, IViewReader views, IOptions<RoutesOptions> routes) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken ct = default)
     {
@@ -15,13 +15,14 @@ public sealed class DependenciesHealthCheck(
         try { await views.PingAsync(ct); }
         catch (Exception ex) { problems["oracle"] = ex.Message; }
 
-        foreach (var (type, t) in types.Value)
+        foreach (var (route, r) in routes.Value)
         {
-            foreach (var (name, dir) in new[] { ("Incoming", t.Incoming), ("Result", t.Result) })
+            foreach (var dir in Enum.GetValues<Dir>())
             {
-                if (string.IsNullOrEmpty(dir)) continue;
-                try { await files.ListAsync(dir, ct); }
-                catch (Exception ex) { problems[$"smb:{type}:{name}"] = ex.Message; }
+                var path = r.TryGetDir(dir);
+                if (string.IsNullOrEmpty(path)) continue;
+                try { await files.ListAsync(path, ct); }
+                catch (Exception ex) { problems[$"smb:{route}:{dir}"] = ex.Message; }
             }
         }
 

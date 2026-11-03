@@ -2,7 +2,7 @@ using DocRouter.Core;
 
 namespace DocRouter.Steps;
 
-/// <summary>Читает файл подписи (<CurrentPath><суффикс>, рядом с файлом) в контекст. Для сценариев A и D.</summary>
+/// <summary>Читает файл подписи (<CurrentPath><суффикс>, рядом с файлом) в память. Для сценариев A и D.</summary>
 public sealed class ReadSignatureFile(IFileStore files) : IStep
 {
     public string SignatureSuffix { get; set; } = ".sig";

@@ -1,36 +1,32 @@
-using System.Globalization;
 using DocRouter.Core;
 
 namespace DocRouter.Steps;
 
-/// <summary>Ищет файл документа в папке типа. Не найден → одно письмо (напоминание раз в сутки) и ожидание следующего опроса.</summary>
-public sealed class FindFile(IFileStore files, INotifier notifier) : IStep
+/// <summary>
+/// Определяет, ГДЕ файл лежит сейчас: ищет по имени в папках маршрута, начиная с самой «продвинутой»
+/// (Signed → ToSign → Incoming). Расположение — это и есть состояние документа между опросами.
+/// Result намеренно не ищем: после перемещения в результат документ завершён.
+/// Предположение: имена файлов уникальны среди документов маршрута, находящихся в работе.
+/// </summary>
+public sealed class FindFile(IFileStore files) : IStep
 {
-    private const string NotifiedAtKey = "notFoundNotifiedAt";
-    public Dir In { get; set; } = Dir.Incoming;
+    private static readonly Dir[] SearchOrder = [Dir.Signed, Dir.ToSign, Dir.Incoming];
 
     public async Task<StepResult> ExecuteAsync(StepContext ctx, CancellationToken ct)
     {
-        var path = Paths.Combine(ctx.Type.GetDir(In), ctx.State.FileName);
-
-        if (await files.ExistsAsync(path, ct))
+        foreach (var dir in SearchOrder)
         {
-            ctx.State.CurrentPath = path;
-            ctx.State.Extra.Remove(NotifiedAtKey);
-            return StepResult.Next();
-        }
+            var folder = ctx.Route.TryGetDir(dir);
+            if (string.IsNullOrEmpty(folder)) continue;
 
-        var needNotify = !ctx.State.Extra.TryGetValue(NotifiedAtKey, out var raw)
-            || DateTime.UtcNow - DateTime.Parse(raw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
-               > TimeSpan.FromHours(24);
-
-        if (needNotify)
-        {
-            await notifier.EnqueueAsync(ctx.Run,
-                $"[DocRouter] Файл не найден: {ctx.Run.DocType} — {ctx.State.FileName}",
-                $"Документ есть в очереди, но файл не найден по пути {path}. Обработка продолжит поиск при каждом опросе.\nПроцесс: {ctx.Run.Id}", ct);
-            ctx.State.Extra[NotifiedAtKey] = DateTime.UtcNow.ToString("O");
+            var path = Paths.Combine(folder, ctx.State.FileName);
+            if (await files.ExistsAsync(path, ct))
+            {
+                ctx.State.CurrentPath = path;
+                ctx.State.Location = dir;
+                return StepResult.Next();
+            }
         }
-        return StepResult.Wait(ctx.PollInterval);
+        return StepResult.Fail($"Файл {ctx.State.FileName} не найден в папках маршрута {ctx.Item.Route}");
     }
 }

@@ -17,14 +17,14 @@ public sealed class InMemoryFileStore : IFileStore
     public void Add(string path, byte[] data, DateTime? mtime = null) => _files[path] = (data, mtime ?? DateTime.UtcNow.AddHours(-1));
     public bool Has(string path) => _files.ContainsKey(path);
     public byte[] Get(string path) => _files[path].Data;
-    public IEnumerable<string> Paths => _files.Keys;
+    public IEnumerable<string> AllPaths => _files.Keys;
 
     public Task<IReadOnlyList<FileEntry>> ListAsync(string dir, CancellationToken ct)
     {
         dir = dir.TrimEnd('\\');
         IReadOnlyList<FileEntry> list = _files
-            .Where(kv => string.Equals(Core.Paths.Directory(kv.Key), dir, StringComparison.OrdinalIgnoreCase))
-            .Select(kv => new FileEntry(Core.Paths.FileName(kv.Key), kv.Key, kv.Value.Data.Length, kv.Value.Mtime))
+            .Where(kv => string.Equals(Paths.Directory(kv.Key), dir, StringComparison.OrdinalIgnoreCase))
+            .Select(kv => new FileEntry(Paths.FileName(kv.Key), kv.Key, kv.Value.Data.Length, kv.Value.Mtime))
             .ToList();
         return Task.FromResult(list);
     }
@@ -41,40 +41,53 @@ public sealed class InMemoryFileStore : IFileStore
         return Task.FromResult(dst);
     }
 
-    public Task<string> WriteUniqueAsync(byte[] content, string targetDir, string fileName, CancellationToken ct)
+    public Task WriteNewAsync(byte[] content, string path, CancellationToken ct)
     {
-        var dst = Unique(targetDir, fileName);
-        _files[dst] = (content, DateTime.UtcNow);
-        return Task.FromResult(dst);
+        if (_files.ContainsKey(path)) throw new IOException("exists");
+        _files[path] = (content, DateTime.UtcNow);
+        return Task.CompletedTask;
     }
 
     public Task DeleteAsync(string path, CancellationToken ct) { _files.Remove(path); return Task.CompletedTask; }
 
     private string Unique(string dir, string name)
     {
-        var p = Core.Paths.Combine(dir, name);
+        var p = Paths.Combine(dir, name);
         for (var i = 1; _files.ContainsKey(p); i++)
-            p = Core.Paths.Combine(dir, $"{Path.GetFileNameWithoutExtension(name)}_dup{i}{Path.GetExtension(name)}");
+            p = Paths.Combine(dir, $"{Path.GetFileNameWithoutExtension(name)}_dup{i}{Path.GetExtension(name)}");
         return p;
     }
 }
 
 public sealed class CapturingNotifier : INotifier
 {
-    public List<(string Subject, string Body)> Sent { get; } = new();
-    public Task EnqueueAsync(DocumentRun run, string subject, string body, CancellationToken ct = default)
+    public List<(string Step, string Reason, WorkItem Item)> Failures { get; } = new();
+    public List<string> System { get; } = new();
+
+    public Task NotifyFailureAsync(WorkItem item, string step, string reason, CancellationToken ct)
     {
-        Sent.Add((subject, body));
+        Failures.Add((step, reason, item));
+        return Task.CompletedTask;
+    }
+
+    public Task NotifySystemAsync(string subject, string body, CancellationToken ct)
+    {
+        System.Add(subject);
         return Task.CompletedTask;
     }
 }
 
 public sealed class FakeStampRenderer : IStampRenderer
 {
-    public StampImage Render(string stampName, IReadOnlyDictionary<string, string> data) =>
-        stampName == "missing"
+    public string? LastStampName { get; private set; }
+
+    public StampImage Render(string stampName, IReadOnlyDictionary<string, string> data)
+    {
+        LastStampName = stampName;
+        return stampName == "missing"
             ? throw new InvalidOperationException("штамп не настроен")
             : new StampImage([1, 2, 3], new StampPlacement(-1, 0, 0, 10, 10));
+    }
 }
 
 public sealed class FakeStamper : IPdfStamper
@@ -84,24 +97,26 @@ public sealed class FakeStamper : IPdfStamper
 
 public static class Ctx
 {
-    public const string In = @"\\srv\docs\t\in";
-    public const string ToSign = @"\\srv\docs\t\tosign";
-    public const string Signed = @"\\srv\docs\t\signed";
-    public const string Result = @"\\srv\archive\t";
+    public const string In = @"\\srv\docs\r\in";
+    public const string ToSign = @"\\srv\docs\r\tosign";
+    public const string Signed = @"\\srv\docs\r\signed";
+    public const string Result = @"\\srv\archive\r";
 
-    public static readonly DocumentTypeOptions Type = new() { Incoming = In, ToSign = ToSign, Signed = Signed, Result = Result };
+    public static RouteOptions Route() => new() { Incoming = In, ToSign = ToSign, Signed = Signed, Result = Result };
 
-    public static StepContext Make(string fileName = "a.pdf", string? currentPath = null)
+    public static StepContext Make(string fileName = "a.pdf", Dir? location = null, string? currentPath = null,
+        string docType = "Contract", DocTypeOptions? type = null, RouteOptions? route = null)
     {
-        var run = new DocumentRun { DocType = "T" };
-        run.Context.FileName = fileName;
-        run.Context.CurrentPath = currentPath;
+        var item = new WorkItem
+        {
+            Route = "R", DocType = docType, FileName = fileName, ExternalId = "42", Source = SourceKind.View
+        };
         return new StepContext
         {
-            Run = run,
-            State = run.Context,
-            Type = Type,
-            PollInterval = TimeSpan.FromMinutes(10),
+            Item = item,
+            State = new ItemState { FileName = fileName, CurrentPath = currentPath, Location = location },
+            Route = route ?? Route(),
+            Type = type ?? new DocTypeOptions(),
             Logger = NullLogger.Instance
         };
     }

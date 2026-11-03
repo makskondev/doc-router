@@ -2,7 +2,7 @@ using DocRouter.Core;
 
 namespace DocRouter.Steps;
 
-/// <summary>Сохранение подписи в Oracle через хранимую процедуру (идемпотентность — на стороне процедуры).</summary>
+/// <summary>Запись подписи в Oracle хранимой процедурой. Процедуре передаётся ID файла (из view; для каталога — имя файла).</summary>
 public sealed class SaveSignature(ISignatureStore store) : IStep
 {
     public async Task<StepResult> ExecuteAsync(StepContext ctx, CancellationToken ct)
@@ -10,12 +10,9 @@ public sealed class SaveSignature(ISignatureStore store) : IStep
         if (string.IsNullOrEmpty(ctx.State.SignatureBase64))
             return StepResult.Fail("Нет подписи для сохранения");
 
-        // Для источника-view идентификатор записи лежит в Extra["ExternalId"], для каталога — путь/имя файла
-        var externalId = ctx.State.Extra.TryGetValue("ExternalId", out var id) ? id : ctx.Run.SourceKey;
-
         await store.SaveAsync(new SignatureSaveRequest(
-            ctx.Run.DocType, externalId, ctx.State.FileName,
-            Convert.FromBase64String(ctx.State.SignatureBase64), ctx.State.Extra), ct);
+            ctx.Item.DocType, ctx.Item.ExternalId, ctx.State.FileName,
+            Convert.FromBase64String(ctx.State.SignatureBase64), ctx.Item.Fields), ct);
 
         return StepResult.Next();
     }

@@ -13,7 +13,7 @@ public class RoutesBuilderTests
         b.For("A").Step<FindFile>().Step<MoveFile>().UseTemplate("tail");
 
         var steps = b.Build().Get("A").Steps.Select(s => s.Name).ToArray();
-        Assert.Equal(["FindFile", "MoveFile", "MoveFile#2"], steps);
+        Assert.Equal(new[] { "FindFile", "MoveFile", "MoveFile#2" }, steps);
     }
 
     [Fact]
@@ -52,7 +52,7 @@ public class RoutesBuilderTests
     public void Real_routes_build()
     {
         var reg = DocRouter.Routes.DocumentRoutes.Build();
-        Assert.Contains("Agreement", reg.DocTypes);
-        Assert.Equal("ApplyStamp", reg.Get("Agreement").Steps[1].Name);
+        Assert.Contains("Agreements", reg.Names);
+        Assert.Equal("ApplyStamp", reg.Get("Agreements").Steps[1].Name);
     }
 }

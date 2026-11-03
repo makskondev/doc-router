@@ -2,7 +2,7 @@ using DocRouter.Core;
 
 namespace DocRouter.Steps;
 
-/// <summary>Перемещает файл в папку типа (To). Исходное имя сохраняется; при коллизии добавляется суффикс даты-времени.</summary>
+/// <summary>Перемещает файл в папку маршрута (To). Исходное имя сохраняется; при коллизии добавляется суффикс даты-времени.</summary>
 public sealed class MoveFile(IFileStore files) : IStep
 {
     public Dir To { get; set; } = Dir.Result;
@@ -11,9 +11,9 @@ public sealed class MoveFile(IFileStore files) : IStep
     {
         var src = ctx.State.CurrentPath!;
         if (!await files.ExistsAsync(src, ct))
-            return StepResult.Fail($"Файл {src} не найден при перемещении (возможно, уже перемещён)");
+            return StepResult.Fail($"Файл {src} не найден при перемещении");
 
-        ctx.State.CurrentPath = await files.MoveUniqueAsync(src, ctx.Type.GetDir(To), ctx.State.FileName, ct);
+        ctx.State.CurrentPath = await files.MoveUniqueAsync(src, ctx.Route.GetDir(To), ctx.State.FileName, ct);
         return StepResult.Next();
     }
 }

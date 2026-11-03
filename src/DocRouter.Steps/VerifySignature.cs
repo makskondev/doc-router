@@ -2,7 +2,7 @@ using DocRouter.Core;
 
 namespace DocRouter.Steps;
 
-/// <summary>Обязательная проверка подписи (REST API проверки). Невалидна → стоп + письмо.</summary>
+/// <summary>Обязательная проверка подписи. Невалидна → Fail (письмо); исправление — заменить .sig, следующий опрос подхватит.</summary>
 public sealed class VerifySignature(IFileStore files, ISignatureService signer) : IStep
 {
     public async Task<StepResult> ExecuteAsync(StepContext ctx, CancellationToken ct)
@@ -18,7 +18,7 @@ public sealed class VerifySignature(IFileStore files, ISignatureService signer) 
         }
         catch (SignatureServiceException ex)
         {
-            return ex.Transient ? StepResult.Transient(ex.Message) : StepResult.Fail($"Проверка подписи: {ex.Message}");
+            return StepResult.Fail($"Проверка подписи: {ex.Message}");
         }
     }
 }

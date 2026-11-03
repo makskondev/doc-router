@@ -19,7 +19,7 @@ public sealed class RouteRegistry(IReadOnlyDictionary<string, RouteDefinition> r
 {
     public bool TryGet(string docType, out RouteDefinition route) => routes.TryGetValue(docType, out route!);
     public RouteDefinition Get(string docType) => routes[docType];
-    public IEnumerable<string> DocTypes => routes.Keys;
+    public IEnumerable<string> Names => routes.Keys;
 }
 
 public sealed class StepListBuilder
@@ -64,7 +64,7 @@ public sealed class RoutesBuilder
         return this;
     }
 
-    /// <summary>Маршрут для типа документа (RouteKey = тип).</summary>
+    /// <summary>Маршрут с именем routeName (папки и правила типов — в секции Routes конфигурации).</summary>
     public StepListBuilder For(string docType)
     {
         if (_routes.ContainsKey(docType)) throw new InvalidOperationException($"Маршрут для типа '{docType}' уже определён");

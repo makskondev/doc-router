@@ -5,28 +5,31 @@ namespace DocRouter.Core;
 // ---------- шаги ----------
 public interface IStep
 {
-    /// <summary>Шаг ДОЛЖЕН быть безопасен для повторного выполнения.</summary>
+    /// <summary>
+    /// Шаг выполняется на КАЖДОМ опросе, пока документ не дойдёт до конца маршрута, поэтому он обязан быть
+    /// идемпотентным и «знать своё место»: если работа уже сделана раньше (ставит State.Location), вернуть Next().
+    /// </summary>
     Task<StepResult> ExecuteAsync(StepContext ctx, CancellationToken ct);
 }
 
 public abstract record StepResult
 {
     public static StepResult Next() => new NextResult();
-    public static StepResult Wait(TimeSpan delay) => new WaitResult(delay);
-    public static StepResult Transient(string reason) => new TransientResult(reason);
-    public static StepResult Fail(string reason, bool notify = true) => new FailResult(reason, notify);
+    /// <summary>Штатное ожидание (например, подпись ещё не поставлена): без ошибки и письма, вернёмся на следующем опросе.</summary>
+    public static StepResult Wait(string reason) => new WaitResult(reason);
+    /// <summary>Неудача: письмо уходит на каждую неудачную попытку, повтор — на следующем опросе.</summary>
+    public static StepResult Fail(string reason) => new FailResult(reason);
 }
 public sealed record NextResult : StepResult;
-public sealed record WaitResult(TimeSpan Delay) : StepResult;
-public sealed record TransientResult(string Reason) : StepResult;
-public sealed record FailResult(string Reason, bool Notify) : StepResult;
+public sealed record WaitResult(string Reason) : StepResult;
+public sealed record FailResult(string Reason) : StepResult;
 
 public sealed class StepContext
 {
-    public required DocumentRun Run { get; init; }
-    public required RunContextData State { get; init; }
-    public required DocumentTypeOptions Type { get; init; }
-    public required TimeSpan PollInterval { get; init; }
+    public required WorkItem Item { get; init; }
+    public required ItemState State { get; init; }
+    public required RouteOptions Route { get; init; }
+    public required DocTypeOptions Type { get; init; }
     public required ILogger Logger { get; init; }
 }
 
@@ -40,8 +43,8 @@ public interface IFileStore
     Task<byte[]> ReadAllBytesAsync(string path, CancellationToken ct);
     /// <summary>Копирует в targetDir без перезаписи (при коллизии имени добавляет суффикс даты-времени), затем удаляет источник. Возвращает итоговый путь.</summary>
     Task<string> MoveUniqueAsync(string sourcePath, string targetDir, string targetFileName, CancellationToken ct);
-    /// <summary>Создаёт новый файл в targetDir без перезаписи (при коллизии имени добавляет суффикс). Возвращает итоговый путь.</summary>
-    Task<string> WriteUniqueAsync(byte[] content, string targetDir, string fileName, CancellationToken ct);
+    /// <summary>Создаёт новый файл строго по указанному пути; если файл уже существует — IOException.</summary>
+    Task WriteNewAsync(byte[] content, string path, CancellationToken ct);
     Task DeleteAsync(string path, CancellationToken ct);
 }
 
@@ -66,7 +69,6 @@ public sealed record StampImage(byte[] Png, StampPlacement Placement);
 
 public interface IStampRenderer
 {
-    /// <summary>Рисует картинку штампа по шаблону с именем stampName. Данные — поля из контекста процесса.</summary>
     StampImage Render(string stampName, IReadOnlyDictionary<string, string> data);
 }
 
@@ -103,11 +105,11 @@ public interface IViewReader
 }
 
 public sealed record SignatureSaveRequest(
-    string DocType, string ExternalId, string FileName, byte[] Signature, IReadOnlyDictionary<string, string> Extra);
+    string DocType, string ExternalId, string FileName, byte[] Signature, IReadOnlyDictionary<string, string> Fields);
 
 public interface ISignatureStore
 {
-    /// <summary>Вызов хранимой процедуры. Идемпотентность (повторный вызов) обеспечивает сама процедура.</summary>
+    /// <summary>Вызов хранимой процедуры с ID файла. Идемпотентность (повторный вызов) обеспечивает сама процедура.</summary>
     Task SaveAsync(SignatureSaveRequest request, CancellationToken ct);
 }
 
@@ -119,6 +121,8 @@ public interface IMailSender
 
 public interface INotifier
 {
-    /// <summary>Кладёт письмо в outbox в рамках текущего юнита работы (сохраняется вместе с состоянием процесса).</summary>
-    Task EnqueueAsync(DocumentRun run, string subject, string body, CancellationToken ct = default);
+    /// <summary>Письмо о неудаче по документу (адресаты: тип + маршрут + по умолчанию). Без ограничения частоты: на каждую неудачу.</summary>
+    Task NotifyFailureAsync(WorkItem item, string step, string reason, CancellationToken ct);
+    /// <summary>Системная ошибка (источник недоступен и т.п.) — адресатам по умолчанию.</summary>
+    Task NotifySystemAsync(string subject, string body, CancellationToken ct);
 }

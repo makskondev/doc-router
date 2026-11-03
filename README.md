@@ -1,47 +1,42 @@
-# DocRouter — сервис «водитель документов»
+# DocRouter — сервис-«курьер» для документов
 
-Каркас v1: свой движок процессов на PostgreSQL, маршруты в коде, SMB через SMBLibrary, Oracle (view + хранимая процедура), REST-подпись, письма через outbox.
+Один сервис (ASP.NET Core, 1 реплика в k8s), который «водит» файлы по маршрутам. **Без БД процессов**: состояние документа = где лежит файл (папки) + есть ли запись во view. При сбое маршрут просто проходится заново на следующем опросе, письмо уходит на каждую неудачу.
 
 > Каркас написан без компиляции (в среде не было .NET SDK). Первый `dotnet build` может показать мелкие правки (версии пакетов, API SMBLibrary).
 
 ## Быстрый старт
 ```sh
-./create-solution.sh                      # создаёт DocRouter.sln
-dotnet build
-dotnet test
-dotnet ef migrations add Init -p src/DocRouter.Engine -s src/DocRouter.Host
-dotnet run --project src/DocRouter.Host   # Database:AutoMigrate=true применит миграцию
+./create-solution.sh && dotnet build && dotnet test
+dotnet run --project src/DocRouter.Host
 ```
-Секреты (пароли SMB/Oracle/Postgres/SMTP) задавайте через переменные окружения k8s: `Smb__Password`, `Oracle__ConnectionString`, `ConnectionStrings__Postgres`.
+Секреты задавайте переменными окружения k8s: `Smb__Password`, `Oracle__ConnectionString`, `Smtp__Password`.
+k8s: `replicas: 1`, `strategy: Recreate`; probes: `/health/live`, `/health/ready` (цикл опроса жив), `/health/deps` — только диагностика.
 
-## Где что
-| Проект | Назначение |
-|---|---|
-| Core | `IStep`, `StepResult`, билдер маршрутов, модели, интерфейсы (SMB, подпись, Oracle, почта) |
-| Engine | EF-хранилище состояния, захват процессов (lease + SKIP LOCKED), исполнитель, воркеры, ViewSource, outbox |
-| Steps | Шаги: FindFile, ApplyStamp, WaitForSignatureFile, ReadSignatureFile, RestSign, VerifySignature, SaveSignature, MoveFile, DeleteFile |
-| Routes | **Маршруты по типам документов** — основной файл разработчика (`DocumentRoutes.cs`) |
-| Infrastructure | SmbFileStore, RestSignatureService, Oracle (view/процедура), SMTP |
-| Tests | xUnit: билдер маршрутов, отбор файлов, шаги (на in-memory IFileStore), исполнитель (EF InMemory) |
-| Host | ASP.NET Core, DI, healthchecks (`/health/live`, `/health/ready`, `/health/deps`) |
+## Как это работает
+Каждые `Courier:PollInterval` (5-15 мин):
+1. **Источники** возвращают документы «в работе»: записи вью (`Sources:Views`) и файлы в `Incoming` маршрутов (`Sources:Directories`).
+2. Для каждого документа **маршрут (цепочка шагов) идёт с первого шага**. Шаги идемпотентны и «знают своё место»: `FindFile` определяет, где файл лежит (Signed → ToSign → Incoming), и шаги, уже выполненные раньше, пропускаются (`ApplyStamp` не штампует повторно; `WaitForSignatureFile` ждёт молча).
+3. `Next` → дальше; `Wait` → тихо до следующего опроса; `Fail`/исключение → лог + письмо (адресаты: тип + маршрут + по умолчанию), повтор на следующем опросе.
 
-## Добавить новый тип документа
-1. Секция в `DocumentTypes` (папки, получатели писем).
-2. Строка в `DocumentRoutes.cs`: `r.For("NewType").UseTemplate(...)` или своя цепочка шагов.
-3. Если тип приходит из view — поле `DOC_TYPE` во вью или `FixedDocType` в `Sources:Views`.
+## Модель конфигурации
+- **Routes** — маршрут: папки `Incoming/ToSign/Signed/Result`, `TypeRules` (префикс/маска имени → тип), `DefaultType`, `ErrorRecipients`. Папки принадлежат маршруту: из одного каталога разные типы идут одним маршрутом.
+- **Types** — тип документа: имя штампа (`Stamp`), `ErrorRecipients`.
+- **Stamps** — шаблоны штампов. **Sources** — какие вью/каталоги кормят какие маршруты.
+- Порядок шагов — в коде: `src/DocRouter.Routes/DocumentRoutes.cs`.
 
-## Ручное вмешательство (v1, без UI)
-Процесс в `Failed` → `UPDATE runs SET status='Pending', attempt=0, next_attempt_at=now() WHERE id='...'`
-(перезапуск с шага N: дополнительно `step_name='<ИмяШага>'`, `step_index=N`); отмена: `status='Cancelled'`.
-Журнал: таблица `run_steps`.
-
-## Сценарии → маршруты (см. `DocumentRoutes.cs`)
+## Сценарии → маршруты
 | | Источник | Цепочка |
 |---|---|---|
-| A | view | FindFile → ApplyStamp → WaitForSignatureFile (.sig, до 24 ч) → ReadSignatureFile → Verify → Save → MoveFile(Result) → DeleteFile(.sig) |
-| B | view | FindFile → RestSign → Verify → Save → MoveFile(Result) |
-| C | каталог (`RequireSignature=false`) | то же, что B |
-| D | каталог (`RequireSignature=true`, `<имя>.sig` рядом) | FindFile → ReadSignatureFile → Verify → Save → MoveFile(Result) → DeleteFile(.sig) |
+| A (`Agreements`) | view | FindFile → ApplyStamp → WaitForSignatureFile (.sig, до 24 ч) → ReadSignatureFile → Verify → Save → MoveFile(Result) → DeleteFile(.sig) |
+| B (`Invoices`) | view | FindFile → RestSign → Verify → Save → MoveFile(Result) |
+| C (`Letters`) | каталог | то же, что B |
+| D (`SignedLetters`) | каталог, `RequireSignature=true` | FindFile → ReadSignatureFile → Verify → Save → MoveFile(Result) → DeleteFile(.sig) |
 
-Штамп: секция `Stamps:<имя>` (PNG-шаблон + строки с подстановками `{ПОЛЕ_ВЬЮ}`, `{Date}`), имя указывается в `ApplyStamp.Stamp`.
-Шаблон штампа в контейнере монтируйте томом/ConfigMap (путь `TemplatePath`).
+Процедуре сохранения подписи передаётся **ID файла из вью** (для каталогов — имя файла).
+
+## Ограничения (осознанные)
+- Нет истории по документам — только структурированные логи (route, docType, file, id в scope).
+- Письмо на каждую неудачу: при недоступности SMB/REST это письмо на каждый документ на каждом опросе.
+- Если сбой случится **после** записи подписи в БД (шаги MoveFile/DeleteFile), запись из view уже исчезла и документ повторно не подхватится — нужно разобрать вручную по письму.
+- Имена файлов должны быть уникальны среди документов маршрута, находящихся в работе.
+- Одна реплика; перезапуск пода безопасен (шаги идемпотентны).

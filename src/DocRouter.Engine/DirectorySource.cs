@@ -32,43 +32,51 @@ public static class DirectoryDocumentSelector
     }
 }
 
-/// <summary>Сценарии C и D: файл появился в Incoming типа → процесс (ключ = полный путь).</summary>
+/// <summary>Сценарии C и D: файл лежит в Incoming маршрута → документ в работе. Тип — по правилам имени маршрута.</summary>
 public sealed class DirectorySource(
     IFileStore files,
-    RunFactory factory,
-    RouteRegistry routes,
+    INotifier notifier,
     TimeProvider time,
     IOptions<SourcesOptions> sources,
-    IOptions<DocumentTypesOptions> types,
+    IOptions<RoutesOptions> routes,
     ILogger<DirectorySource> log) : ISourcePoller
 {
     public string Name => "directories";
 
-    public async Task PollAsync(CancellationToken ct)
+    public async Task<IReadOnlyList<WorkItem>> DiscoverAsync(CancellationToken ct)
     {
+        var items = new List<WorkItem>();
+
         foreach (var d in sources.Value.Directories)
         {
-            if (!routes.TryGet(d.DocType, out _) || !types.Value.TryGetValue(d.DocType, out var t) || string.IsNullOrEmpty(t.Incoming))
+            if (!routes.Value.TryGetValue(d.Route, out var route) || string.IsNullOrEmpty(route.Incoming))
             {
-                log.LogWarning("Каталог-источник: тип {Type} без маршрута или без Incoming, пропущен", d.DocType);
+                log.LogError("Каталог-источник: у маршрута {Route} нет настроек или Incoming", d.Route);
                 continue;
             }
 
             IReadOnlyList<FileEntry> entries;
-            try { entries = await files.ListAsync(t.Incoming, ct); }
+            try { entries = await files.ListAsync(route.Incoming, ct); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                log.LogError(ex, "Не удалось прочитать каталог {Dir} (тип {Type})", t.Incoming, d.DocType);
+                log.LogError(ex, "Не удалось прочитать каталог {Dir}", route.Incoming);
+                await notifier.NotifySystemAsync($"[DocRouter] Каталог недоступен: {route.Incoming}", ex.Message, ct);
                 continue;
             }
 
-            var created = 0;
             foreach (var f in DirectoryDocumentSelector.Select(entries, d, time.GetUtcNow().UtcDateTime))
             {
-                var extra = new Dictionary<string, string> { ["ExternalId"] = f.Name, ["SourcePath"] = f.FullPath };
-                if (await factory.TryCreateAsync(d.DocType, SourceKind.Directory, f.FullPath, f.Name, extra, ct)) created++;
+                items.Add(new WorkItem
+                {
+                    Route = d.Route,
+                    DocType = TypeClassifier.Resolve(route, f.Name, null),
+                    FileName = f.Name,
+                    ExternalId = f.Name,        // для каталога процедуре передаётся имя файла (предположение)
+                    Source = SourceKind.Directory,
+                    Fields = new Dictionary<string, string> { ["SourcePath"] = f.FullPath }
+                });
             }
-            if (created > 0) log.LogInformation("Каталог {Dir}: новых процессов {Created}", t.Incoming, created);
         }
+        return items;
     }
 }
