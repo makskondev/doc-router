@@ -37,6 +37,9 @@ foreach (var v in sources.Views)
         throw new InvalidOperationException($"Вью {v.Name}: задайте Route или DocTypeColumn");
     if (v.Route is not null && !routes.TryGet(v.Route, out _))
         throw new InvalidOperationException($"Вью {v.Name}: неизвестный маршрут '{v.Route}'");
+    foreach (var (code, route) in v.TypeMap)
+        if (!routes.TryGet(route, out _))
+            throw new InvalidOperationException($"Вью {v.Name}: код '{code}' указывает на неизвестный маршрут '{route}'");
 }
 foreach (var d in sources.Directories)
     if (!routes.TryGet(d.Route, out _)) throw new InvalidOperationException($"Каталог-источник: неизвестный маршрут '{d.Route}'");
