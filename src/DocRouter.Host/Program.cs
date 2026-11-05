@@ -32,7 +32,12 @@ foreach (var name in routes.Names)
         throw new InvalidOperationException($"Маршрут '{name}': должны быть заданы Incoming и Result");
 }
 foreach (var v in sources.Views)
-    if (!routes.TryGet(v.Route, out _)) throw new InvalidOperationException($"Вью {v.Name}: неизвестный маршрут '{v.Route}'");
+{
+    if (v.Route is null && string.IsNullOrWhiteSpace(v.DocTypeColumn))
+        throw new InvalidOperationException($"Вью {v.Name}: задайте Route или DocTypeColumn");
+    if (v.Route is not null && !routes.TryGet(v.Route, out _))
+        throw new InvalidOperationException($"Вью {v.Name}: неизвестный маршрут '{v.Route}'");
+}
 foreach (var d in sources.Directories)
     if (!routes.TryGet(d.Route, out _)) throw new InvalidOperationException($"Каталог-источник: неизвестный маршрут '{d.Route}'");
 

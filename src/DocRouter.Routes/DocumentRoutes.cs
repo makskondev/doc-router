@@ -4,9 +4,10 @@ using DocRouter.Steps;
 namespace DocRouter.Routes;
 
 /// <summary>
-/// Единственное место, где разработчик описывает маршруты: имя маршрута → цепочка шагов.
+/// Единственное место, где разработчик описывает маршруты: тип документа (= имя маршрута) → цепочка шагов.
+/// Общая логика нескольких типов выносится в шаблоны (Template + UseTemplate).
 /// Цепочка выполняется с начала на каждом опросе; шаги сами понимают, что уже сделано (см. FindFile/ApplyStamp/WaitForSignatureFile).
-/// Папки, правила определения типа и адресаты — в конфигурации (Routes / Types).
+/// Папки, штамп и адресаты ошибок — в конфигурации (секция Routes, ключ = имя маршрута).
 /// </summary>
 public static class DocumentRoutes
 {
@@ -27,22 +28,23 @@ public static class DocumentRoutes
             .UseTemplate("VerifySaveArchive"));
 
         // B: запись во view → REST-подпись
-        r.For("Invoices").UseTemplate("RestSign");
+        r.For("Invoice").UseTemplate("RestSign");
+        r.For("Act").UseTemplate("RestSign");          // другой тип с той же цепочкой, но со своими папками в конфигурации
 
         // A: запись во view → штамп → папка подписи → ждём файл + .sig → проверка → БД → результат → удалить .sig
-        r.For("Agreements")
+        r.For("Agreement")
             .Step<FindFile>()
-            .Step<ApplyStamp>()                                   // штамп — по типу документа
+            .Step<ApplyStamp>()                                   // штамп: Routes:Agreement:Stamp или Stamps:Agreement
             .Step<WaitForSignatureFile>(s => s.Timeout = TimeSpan.FromHours(24))
             .Step<ReadSignatureFile>()
             .UseTemplate("VerifySaveArchive")
             .Step<DeleteFile>();
 
         // C: файл появился в каталоге → REST-подпись (Sources:Directories, RequireSignature=false)
-        r.For("Letters").UseTemplate("RestSign");
+        r.For("Letter").UseTemplate("RestSign");
 
         // D: файл появился уже с подписью (<имя>.sig рядом) (Sources:Directories, RequireSignature=true)
-        r.For("SignedLetters")
+        r.For("SignedLetter")
             .Step<FindFile>()
             .Step<ReadSignatureFile>()
             .UseTemplate("VerifySaveArchive")

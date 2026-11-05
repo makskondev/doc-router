@@ -105,18 +105,17 @@ public static class Ctx
     public static RouteOptions Route() => new() { Incoming = In, ToSign = ToSign, Signed = Signed, Result = Result };
 
     public static StepContext Make(string fileName = "a.pdf", Dir? location = null, string? currentPath = null,
-        string docType = "Contract", DocTypeOptions? type = null, RouteOptions? route = null)
+        RouteOptions? route = null)
     {
         var item = new WorkItem
         {
-            Route = "R", DocType = docType, FileName = fileName, ExternalId = "42", Source = SourceKind.View
+            Route = "R", FileName = fileName, ExternalId = "42", Source = SourceKind.View
         };
         return new StepContext
         {
             Item = item,
             State = new ItemState { FileName = fileName, CurrentPath = currentPath, Location = location },
             Route = route ?? Route(),
-            Type = type ?? new DocTypeOptions(),
             Logger = NullLogger.Instance
         };
     }

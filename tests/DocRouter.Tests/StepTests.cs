@@ -81,34 +81,30 @@ public class StepTests
     }
 
     [Fact]
-    public async Task ApplyStamp_name_priority_step_then_type_then_doctype()
+    public async Task ApplyStamp_name_priority_step_then_route_setting_then_route_name()
     {
-        var fs = new InMemoryFileStore();
         var src = Paths.Combine(Ctx.In, "a.pdf");
 
-        fs.Add(src, Pdf);
+        // 1) свойство шага
+        var fs = new InMemoryFileStore(); fs.Add(src, Pdf);
         var r1 = new FakeStampRenderer();
-        await Stamp(fs, r1).ExecuteAsync(Ctx.Make(location: Dir.Incoming, currentPath: src,
-            type: new DocTypeOptions { Stamp = "fromType" }, docType: "Contract"), default);
-        Assert.Equal("fromType", r1.LastStampName);
+        var step = new ApplyStamp(fs, r1, new FakeStamper()) { Stamp = "fromStep" };
+        await step.ExecuteAsync(Ctx.Make(location: Dir.Incoming, currentPath: src,
+            route: new RouteOptions { Incoming = Ctx.In, ToSign = Ctx.ToSign, Stamp = "fromRoute" }), default);
+        Assert.Equal("fromStep", r1.LastStampName);
 
+        // 2) настройка маршрута
         fs = new InMemoryFileStore(); fs.Add(src, Pdf);
         var r2 = new FakeStampRenderer();
-        await Stamp(fs, r2).ExecuteAsync(Ctx.Make(location: Dir.Incoming, currentPath: src, docType: "Contract"), default);
-        Assert.Equal("Contract", r2.LastStampName);
-    }
+        await Stamp(fs, r2).ExecuteAsync(Ctx.Make(location: Dir.Incoming, currentPath: src,
+            route: new RouteOptions { Incoming = Ctx.In, ToSign = Ctx.ToSign, Stamp = "fromRoute" }), default);
+        Assert.Equal("fromRoute", r2.LastStampName);
 
-    [Fact]
-    public async Task ApplyStamp_without_type_and_stamp_fails_and_keeps_file()
-    {
-        var fs = new InMemoryFileStore();
-        var src = Paths.Combine(Ctx.In, "a.pdf");
-        fs.Add(src, Pdf);
-
-        var res = await Stamp(fs).ExecuteAsync(Ctx.Make(location: Dir.Incoming, currentPath: src, docType: ""), default);
-
-        Assert.IsType<FailResult>(res);
-        Assert.True(fs.Has(src));
+        // 3) имя маршрута (= тип документа) по умолчанию
+        fs = new InMemoryFileStore(); fs.Add(src, Pdf);
+        var r3 = new FakeStampRenderer();
+        await Stamp(fs, r3).ExecuteAsync(Ctx.Make(location: Dir.Incoming, currentPath: src), default);
+        Assert.Equal("R", r3.LastStampName);
     }
 
     [Fact]
@@ -130,7 +126,7 @@ public class StepTests
         fs.Add(src, Pdf);
 
         var res = await Stamp(fs).ExecuteAsync(Ctx.Make(location: Dir.Incoming, currentPath: src,
-            type: new DocTypeOptions { Stamp = "missing" }), default);
+            route: new RouteOptions { Incoming = Ctx.In, ToSign = Ctx.ToSign, Stamp = "missing" }), default);
 
         Assert.IsType<FailResult>(res);
         Assert.Single(fs.AllPaths);

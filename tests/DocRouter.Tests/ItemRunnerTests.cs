@@ -46,14 +46,14 @@ public class ItemRunnerTests
         var notifier = new CapturingNotifier();
         var sp = new ServiceCollection().AddSingleton(trace).BuildServiceProvider();
 
-        var runner = new ItemRunner(sp, registry, Options.Create(routes), Options.Create(new TypesOptions()),
+        var runner = new ItemRunner(sp, registry, Options.Create(routes),
             notifier, NullLogger<ItemRunner>.Instance);
         return new Env(runner, trace, notifier);
     }
 
     private static WorkItem Item() => new()
     {
-        Route = "R", DocType = "Contract", FileName = "a.pdf", ExternalId = "42", Source = SourceKind.View
+        Route = "R", FileName = "a.pdf", ExternalId = "42", Source = SourceKind.View
     };
 
     [Fact]

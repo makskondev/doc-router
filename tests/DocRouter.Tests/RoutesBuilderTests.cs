@@ -52,7 +52,8 @@ public class RoutesBuilderTests
     public void Real_routes_build()
     {
         var reg = DocRouter.Routes.DocumentRoutes.Build();
-        Assert.Contains("Agreements", reg.Names);
-        Assert.Equal("ApplyStamp", reg.Get("Agreements").Steps[1].Name);
+        Assert.Contains("Agreement", reg.Names);
+        Assert.Equal("ApplyStamp", reg.Get("Agreement").Steps[1].Name);
+        Assert.Equal(reg.Get("Invoice").Steps.Select(x => x.Name), reg.Get("Act").Steps.Select(x => x.Name));   // типы делят шаблон
     }
 }

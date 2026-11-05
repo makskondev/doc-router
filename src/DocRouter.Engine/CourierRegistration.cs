@@ -10,7 +10,6 @@ public static class CourierRegistration
     {
         services.Configure<CourierOptions>(cfg.GetSection("Courier"));
         services.Configure<RoutesOptions>(cfg.GetSection("Routes"));
-        services.Configure<TypesOptions>(cfg.GetSection("Types"));
         services.Configure<SourcesOptions>(cfg.GetSection("Sources"));
 
         services.AddSingleton(TimeProvider.System);

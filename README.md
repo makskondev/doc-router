@@ -14,23 +14,26 @@ k8s: `replicas: 1`, `strategy: Recreate`; probes: `/health/live`, `/health/ready
 
 ## Как это работает
 Каждые `Courier:PollInterval` (5-15 мин):
-1. **Источники** возвращают документы «в работе»: записи вью (`Sources:Views`) и файлы в `Incoming` маршрутов (`Sources:Directories`).
+1. **Источники** возвращают документы «в работе»: записи вью (`Sources:Views`) и файлы в `Incoming` маршрутов (`Sources:Directories`); тип документа = маршрут.
 2. Для каждого документа **маршрут (цепочка шагов) идёт с первого шага**. Шаги идемпотентны и «знают своё место»: `FindFile` определяет, где файл лежит (Signed → ToSign → Incoming), и шаги, уже выполненные раньше, пропускаются (`ApplyStamp` не штампует повторно; `WaitForSignatureFile` ждёт молча).
 3. `Next` → дальше; `Wait` → тихо до следующего опроса; `Fail`/исключение → лог + письмо (адресаты: тип + маршрут + по умолчанию), повтор на следующем опросе.
 
-## Модель конфигурации
-- **Routes** — маршрут: папки `Incoming/ToSign/Signed/Result`, `TypeRules` (префикс/маска имени → тип), `DefaultType`, `ErrorRecipients`. Папки принадлежат маршруту: из одного каталога разные типы идут одним маршрутом.
-- **Types** — тип документа: имя штампа (`Stamp`), `ErrorRecipients`.
-- **Stamps** — шаблоны штампов. **Sources** — какие вью/каталоги кормят какие маршруты.
-- Порядок шагов — в коде: `src/DocRouter.Routes/DocumentRoutes.cs`.
+## Модель конфигурации: тип документа = маршрут
+- **Routes** — ключ = имя маршрута = тип документа. Внутри: папки `Incoming/ToSign/Signed/Result`, `Stamp` (имя штампа, по умолчанию = имя маршрута), `ErrorRecipients`. Один каталог = один тип.
+- **Sources** — откуда приходят документы:
+  - `Views`: у вью задаётся либо `Route` (все записи — один тип), либо `DocTypeColumn` (значение колонки = имя маршрута; во вью могут быть разные типы). ID файла — колонка `IdColumn`.
+  - `Directories`: `Route` — маршрут, чей `Incoming` опрашивается.
+- **Stamps** — шаблоны штампов (ключ = имя штампа).
+- Порядок шагов — в коде: `src/DocRouter.Routes/DocumentRoutes.cs`. Общая логика нескольких типов — шаблоны (`Template` + `UseTemplate`): например, `Invoice` и `Act` делят цепочку `RestSign`, но имеют свои папки и адресатов в конфиге.
+- Письмо об ошибке: `Routes:<маршрут>:ErrorRecipients` + `Courier:DefaultRecipients`.
 
 ## Сценарии → маршруты
 | | Источник | Цепочка |
 |---|---|---|
-| A (`Agreements`) | view | FindFile → ApplyStamp → WaitForSignatureFile (.sig, до 24 ч) → ReadSignatureFile → Verify → Save → MoveFile(Result) → DeleteFile(.sig) |
-| B (`Invoices`) | view | FindFile → RestSign → Verify → Save → MoveFile(Result) |
-| C (`Letters`) | каталог | то же, что B |
-| D (`SignedLetters`) | каталог, `RequireSignature=true` | FindFile → ReadSignatureFile → Verify → Save → MoveFile(Result) → DeleteFile(.sig) |
+| A (`Agreement`) | view | FindFile → ApplyStamp → WaitForSignatureFile (.sig, до 24 ч) → ReadSignatureFile → Verify → Save → MoveFile(Result) → DeleteFile(.sig) |
+| B (`Invoice`, `Act`) | view | FindFile → RestSign → Verify → Save → MoveFile(Result) |
+| C (`Letter`) | каталог | то же, что B |
+| D (`SignedLetter`) | каталог, `RequireSignature=true` | FindFile → ReadSignatureFile → Verify → Save → MoveFile(Result) → DeleteFile(.sig) |
 
 Процедуре сохранения подписи передаётся **ID файла из вью** (для каталогов — имя файла).
 

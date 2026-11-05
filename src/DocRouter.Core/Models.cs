@@ -3,11 +3,10 @@ namespace DocRouter.Core;
 public enum SourceKind { View, Directory }
 public enum Dir { Incoming, ToSign, Signed, Result }
 
-/// <summary>Документ, найденный источником на текущем опросе. Состояния между опросами нет: «где документ» определяют папки и view.</summary>
+/// <summary>Документ, найденный источником на текущем опросе. Тип документа = маршрут. Состояния между опросами нет: «где документ» определяют папки и view.</summary>
 public sealed class WorkItem
 {
-    public required string Route { get; init; }
-    public required string DocType { get; init; }        // "" — тип по имени/полю не определён
+    public required string Route { get; init; }          // имя маршрута = тип документа
     public required string FileName { get; init; }
     public required string ExternalId { get; init; }     // ID файла из view; для каталога — имя файла
     public required SourceKind Source { get; init; }

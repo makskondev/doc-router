@@ -8,21 +8,18 @@ namespace DocRouter.Engine;
 public sealed class EmailNotifier(
     IMailSender mail,
     IOptions<RoutesOptions> routes,
-    IOptions<TypesOptions> types,
     IOptions<CourierOptions> courier,
     ILogger<EmailNotifier> log) : INotifier
 {
     public Task NotifyFailureAsync(WorkItem item, string step, string reason, CancellationToken ct)
     {
         var to = new List<string>();
-        if (types.Value.TryGetValue(item.DocType, out var t)) to.AddRange(t.ErrorRecipients);
         if (routes.Value.TryGetValue(item.Route, out var r)) to.AddRange(r.ErrorRecipients);
         to.AddRange(courier.Value.DefaultRecipients);
 
         var subject = $"[DocRouter] Ошибка: {item.Route} / {item.FileName}";
         var body = $"""
-            Маршрут: {item.Route}
-            Тип документа: {(item.DocType.Length == 0 ? "не определён" : item.DocType)}
+            Тип документа (маршрут): {item.Route}
             Файл: {item.FileName}
             ID: {item.ExternalId}
             Шаг: {step}

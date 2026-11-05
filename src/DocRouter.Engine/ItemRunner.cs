@@ -13,7 +13,6 @@ public sealed class ItemRunner(
     IServiceProvider services,
     RouteRegistry routes,
     IOptions<RoutesOptions> routeOptions,
-    IOptions<TypesOptions> typeOptions,
     INotifier notifier,
     ILogger<ItemRunner> log)
 {
@@ -21,7 +20,7 @@ public sealed class ItemRunner(
     {
         using var scope = log.BeginScope(new Dictionary<string, object?>
         {
-            ["route"] = item.Route, ["docType"] = item.DocType, ["file"] = item.FileName, ["id"] = item.ExternalId
+            ["route"] = item.Route, ["file"] = item.FileName, ["id"] = item.ExternalId
         });
 
         if (!routes.TryGet(item.Route, out var route) || !routeOptions.Value.TryGetValue(item.Route, out var routeCfg))
@@ -35,7 +34,6 @@ public sealed class ItemRunner(
             Item = item,
             State = new ItemState { FileName = item.FileName },
             Route = routeCfg,
-            Type = typeOptions.Value.TryGetValue(item.DocType, out var t) ? t : new DocTypeOptions(),
             Logger = log
         };
 

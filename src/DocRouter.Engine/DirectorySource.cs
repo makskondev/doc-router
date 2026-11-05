@@ -32,7 +32,7 @@ public static class DirectoryDocumentSelector
     }
 }
 
-/// <summary>Сценарии C и D: файл лежит в Incoming маршрута → документ в работе. Тип — по правилам имени маршрута.</summary>
+/// <summary>Сценарии C и D: файл лежит в Incoming маршрута (= типа документа) → документ в работе.</summary>
 public sealed class DirectorySource(
     IFileStore files,
     INotifier notifier,
@@ -69,7 +69,6 @@ public sealed class DirectorySource(
                 items.Add(new WorkItem
                 {
                     Route = d.Route,
-                    DocType = TypeClassifier.Resolve(route, f.Name, null),
                     FileName = f.Name,
                     ExternalId = f.Name,        // для каталога процедуре передаётся имя файла (предположение)
                     Source = SourceKind.Directory,

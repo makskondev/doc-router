@@ -29,7 +29,6 @@ public sealed class StepContext
     public required WorkItem Item { get; init; }
     public required ItemState State { get; init; }
     public required RouteOptions Route { get; init; }
-    public required DocTypeOptions Type { get; init; }
     public required ILogger Logger { get; init; }
 }
 
@@ -121,7 +120,7 @@ public interface IMailSender
 
 public interface INotifier
 {
-    /// <summary>Письмо о неудаче по документу (адресаты: тип + маршрут + по умолчанию). Без ограничения частоты: на каждую неудачу.</summary>
+    /// <summary>Письмо о неудаче по документу (адресаты: маршрут + по умолчанию). Без ограничения частоты: на каждую неудачу.</summary>
     Task NotifyFailureAsync(WorkItem item, string step, string reason, CancellationToken ct);
     /// <summary>Системная ошибка (источник недоступен и т.п.) — адресатам по умолчанию.</summary>
     Task NotifySystemAsync(string subject, string body, CancellationToken ct);

@@ -6,7 +6,7 @@ namespace DocRouter.Steps;
 /// Сценарий A. Штамп накладывается, только если файл ещё во входной папке; проштампованный файл пишется в ToSign
 /// под тем же именем (без суффикса, чтобы документ можно было найти на следующих опросах), исходный удаляется.
 /// Если файл уже в ToSign/Signed — штамп поставлен на прошлом опросе: идём дальше (и дочищаем исходник,
-/// если сбой случился между записью и удалением). Имя штампа: Stamp → Types:[тип].Stamp → имя типа.
+/// если сбой случился между записью и удалением). Имя штампа: Stamp шага → Routes:[маршрут].Stamp → имя маршрута (= тип документа).
 /// </summary>
 public sealed class ApplyStamp(IFileStore files, IStampRenderer renderer, IPdfStamper stamper) : IStep
 {
@@ -24,9 +24,7 @@ public sealed class ApplyStamp(IFileStore files, IStampRenderer renderer, IPdfSt
             return StepResult.Next();
         }
 
-        var stampName = Stamp ?? ctx.Type.Stamp ?? ctx.Item.DocType;
-        if (string.IsNullOrWhiteSpace(stampName))
-            return StepResult.Fail("Не определён штамп: тип документа не распознан по имени файла и штамп не задан");
+        var stampName = Stamp ?? ctx.Route.Stamp ?? ctx.Item.Route;
 
         var src = ctx.State.CurrentPath!;
         var bytes = await files.ReadAllBytesAsync(src, ct);
