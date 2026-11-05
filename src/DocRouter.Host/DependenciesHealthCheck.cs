@@ -6,7 +6,7 @@ namespace DocRouter.Host;
 
 /// <summary>Диагностика внешних зависимостей. Не используется как readiness: сбой SMB/Oracle не должен перезапускать под.</summary>
 public sealed class DependenciesHealthCheck(
-    IFileStore files, IViewReader views, IOptions<RoutesOptions> routes) : IHealthCheck
+    IFileStore files, IViewReader views, IOptions<DirectoriesOptions> dirs) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken ct = default)
     {
@@ -15,15 +15,13 @@ public sealed class DependenciesHealthCheck(
         try { await views.PingAsync(ct); }
         catch (Exception ex) { problems["oracle"] = ex.Message; }
 
-        foreach (var (route, r) in routes.Value)
+        // Все UNC-папки из Dirs__* (локальные пути, например шаблоны штампов, не проверяются)
+        foreach (var p in typeof(DirectoriesOptions).GetProperties().Where(p => p.PropertyType == typeof(string)))
         {
-            foreach (var dir in Enum.GetValues<Dir>())
-            {
-                var path = r.TryGetDir(dir);
-                if (string.IsNullOrEmpty(path)) continue;
-                try { await files.ListAsync(path, ct); }
-                catch (Exception ex) { problems[$"smb:{route}:{dir}"] = ex.Message; }
-            }
+            var path = (string?)p.GetValue(dirs.Value);
+            if (string.IsNullOrEmpty(path) || !path.StartsWith(@"\\")) continue;
+            try { await files.ListAsync(path, ct); }
+            catch (Exception ex) { problems[$"smb:{p.Name}"] = ex.Message; }
         }
 
         return problems.Count == 0

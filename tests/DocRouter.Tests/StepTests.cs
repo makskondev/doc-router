@@ -9,102 +9,80 @@ public class StepTests
 
     // ---------- FindFile ----------
     [Fact]
-    public async Task FindFile_finds_in_incoming()
+    public async Task FindFile_finds_file_and_remembers_folder()
     {
         var fs = new InMemoryFileStore();
         fs.Add(Paths.Combine(Ctx.In, "a.pdf"), Pdf);
         var ctx = Ctx.Make();
 
-        Assert.IsType<NextResult>(await new FindFile(fs).ExecuteAsync(ctx, default));
-        Assert.Equal(Dir.Incoming, ctx.State.Location);
+        Assert.IsType<NextResult>(await new FindFile(fs) { In = [Ctx.In] }.ExecuteAsync(ctx, default));
+        Assert.Equal(Ctx.In, ctx.State.FoundIn);
         Assert.Equal(Paths.Combine(Ctx.In, "a.pdf"), ctx.State.CurrentPath);
     }
 
     [Fact]
-    public async Task FindFile_prefers_most_advanced_location()
+    public async Task FindFile_respects_the_order_of_search_folders()
     {
         var fs = new InMemoryFileStore();
         fs.Add(Paths.Combine(Ctx.In, "a.pdf"), Pdf);        // «хвост» от прошлого опроса
         fs.Add(Paths.Combine(Ctx.ToSign, "a.pdf"), Pdf);
-        var ctx = Ctx.Make();
-        await new FindFile(fs).ExecuteAsync(ctx, default);
-        Assert.Equal(Dir.ToSign, ctx.State.Location);
-
         fs.Add(Paths.Combine(Ctx.Signed, "a.pdf"), Pdf);
-        var ctx2 = Ctx.Make();
-        await new FindFile(fs).ExecuteAsync(ctx2, default);
-        Assert.Equal(Dir.Signed, ctx2.State.Location);
+
+        var advancedFirst = Ctx.Make();
+        await new FindFile(fs) { In = [Ctx.Signed, Ctx.ToSign, Ctx.In] }.ExecuteAsync(advancedFirst, default);
+        Assert.Equal(Ctx.Signed, advancedFirst.State.FoundIn);
+
+        var other = Ctx.Make();
+        await new FindFile(fs) { In = [Ctx.ToSign, Ctx.In] }.ExecuteAsync(other, default);
+        Assert.Equal(Ctx.ToSign, other.State.FoundIn);
     }
 
     [Fact]
-    public async Task FindFile_does_not_look_in_result()
+    public async Task FindFile_does_not_look_outside_given_folders()
     {
         var fs = new InMemoryFileStore();
         fs.Add(Paths.Combine(Ctx.Result, "a.pdf"), Pdf);   // старый документ с тем же именем в архиве
-        Assert.IsType<FailResult>(await new FindFile(fs).ExecuteAsync(Ctx.Make(), default));
+        Assert.IsType<FailResult>(await new FindFile(fs) { In = [Ctx.In] }.ExecuteAsync(Ctx.Make(), default));
     }
 
     [Fact]
-    public async Task FindFile_skips_unconfigured_folders()
-    {
-        var fs = new InMemoryFileStore();
-        fs.Add(Paths.Combine(Ctx.In, "a.pdf"), Pdf);
-        var route = new RouteOptions { Incoming = Ctx.In, Result = Ctx.Result };   // маршрут без ToSign/Signed
-        var ctx = Ctx.Make(route: route);
-
-        Assert.IsType<NextResult>(await new FindFile(fs).ExecuteAsync(ctx, default));
-        Assert.Equal(Dir.Incoming, ctx.State.Location);
-    }
-
-    [Fact]
-    public async Task FindFile_not_found_fails() =>
+    public async Task FindFile_without_folders_fails() =>
         Assert.IsType<FailResult>(await new FindFile(new InMemoryFileStore()).ExecuteAsync(Ctx.Make(), default));
 
     // ---------- ApplyStamp ----------
-    private static ApplyStamp Stamp(InMemoryFileStore fs, FakeStampRenderer? r = null) =>
-        new(fs, r ?? new FakeStampRenderer(), new FakeStamper());
+    private static ApplyStamp Stamp(InMemoryFileStore fs, FakeStampRenderer? r = null, string? name = null) =>
+        new(fs, r ?? new FakeStampRenderer(), new FakeStamper()) { From = Ctx.In, To = Ctx.ToSign, Stamp = name };
 
     [Fact]
-    public async Task ApplyStamp_writes_stamped_to_ToSign_same_name_and_removes_original()
+    public async Task ApplyStamp_writes_stamped_to_To_same_name_and_removes_original()
     {
         var fs = new InMemoryFileStore();
         var src = Paths.Combine(Ctx.In, "a.pdf");
         fs.Add(src, Pdf);
-        var ctx = Ctx.Make(location: Dir.Incoming, currentPath: src);
+        var ctx = Ctx.Make(foundIn: Ctx.In, currentPath: src);
 
         Assert.IsType<NextResult>(await Stamp(fs).ExecuteAsync(ctx, default));
 
         Assert.False(fs.Has(src));
         Assert.Equal(Paths.Combine(Ctx.ToSign, "a.pdf"), ctx.State.CurrentPath);
-        Assert.Equal(Dir.ToSign, ctx.State.Location);
+        Assert.Equal(Ctx.ToSign, ctx.State.FoundIn);
         Assert.EndsWith("STAMPED", System.Text.Encoding.ASCII.GetString(fs.Get(ctx.State.CurrentPath!)));
     }
 
     [Fact]
-    public async Task ApplyStamp_name_priority_step_then_route_setting_then_route_name()
+    public async Task ApplyStamp_name_is_step_property_or_doc_type_by_default()
     {
         var src = Paths.Combine(Ctx.In, "a.pdf");
 
-        // 1) свойство шага
         var fs = new InMemoryFileStore(); fs.Add(src, Pdf);
         var r1 = new FakeStampRenderer();
-        var step = new ApplyStamp(fs, r1, new FakeStamper()) { Stamp = "fromStep" };
-        await step.ExecuteAsync(Ctx.Make(location: Dir.Incoming, currentPath: src,
-            route: new RouteOptions { Incoming = Ctx.In, ToSign = Ctx.ToSign, Stamp = "fromRoute" }), default);
-        Assert.Equal("fromStep", r1.LastStampName);
+        await Stamp(fs, r1, name: "explicit").ExecuteAsync(Ctx.Make(foundIn: Ctx.In, currentPath: src), default);
+        Assert.Equal("explicit", r1.LastStampName);
 
-        // 2) настройка маршрута
         fs = new InMemoryFileStore(); fs.Add(src, Pdf);
         var r2 = new FakeStampRenderer();
-        await Stamp(fs, r2).ExecuteAsync(Ctx.Make(location: Dir.Incoming, currentPath: src,
-            route: new RouteOptions { Incoming = Ctx.In, ToSign = Ctx.ToSign, Stamp = "fromRoute" }), default);
-        Assert.Equal("fromRoute", r2.LastStampName);
-
-        // 3) имя маршрута (= тип документа) по умолчанию
-        fs = new InMemoryFileStore(); fs.Add(src, Pdf);
-        var r3 = new FakeStampRenderer();
-        await Stamp(fs, r3).ExecuteAsync(Ctx.Make(location: Dir.Incoming, currentPath: src), default);
-        Assert.Equal("R", r3.LastStampName);
+        await Stamp(fs, r2).ExecuteAsync(Ctx.Make(foundIn: Ctx.In, currentPath: src), default);
+        Assert.Equal("T", r2.LastStampName);      // имя типа документа
     }
 
     [Fact]
@@ -114,7 +92,7 @@ public class StepTests
         var src = Paths.Combine(Ctx.In, "a.pdf");
         fs.Add(src, "hello"u8.ToArray());
 
-        Assert.IsType<FailResult>(await Stamp(fs).ExecuteAsync(Ctx.Make(location: Dir.Incoming, currentPath: src), default));
+        Assert.IsType<FailResult>(await Stamp(fs).ExecuteAsync(Ctx.Make(foundIn: Ctx.In, currentPath: src), default));
         Assert.True(fs.Has(src));
     }
 
@@ -125,15 +103,12 @@ public class StepTests
         var src = Paths.Combine(Ctx.In, "a.pdf");
         fs.Add(src, Pdf);
 
-        var res = await Stamp(fs).ExecuteAsync(Ctx.Make(location: Dir.Incoming, currentPath: src,
-            route: new RouteOptions { Incoming = Ctx.In, ToSign = Ctx.ToSign, Stamp = "missing" }), default);
-
-        Assert.IsType<FailResult>(res);
+        Assert.IsType<FailResult>(await Stamp(fs, name: "missing").ExecuteAsync(Ctx.Make(foundIn: Ctx.In, currentPath: src), default));
         Assert.Single(fs.AllPaths);
     }
 
     [Fact]
-    public async Task ApplyStamp_does_not_overwrite_existing_file_in_ToSign()
+    public async Task ApplyStamp_does_not_overwrite_existing_file_in_To()
     {
         var fs = new InMemoryFileStore();
         var src = Paths.Combine(Ctx.In, "a.pdf");
@@ -141,13 +116,13 @@ public class StepTests
         fs.Add(src, Pdf);
         fs.Add(existing, [7]);
 
-        Assert.IsType<FailResult>(await Stamp(fs).ExecuteAsync(Ctx.Make(location: Dir.Incoming, currentPath: src), default));
+        Assert.IsType<FailResult>(await Stamp(fs).ExecuteAsync(Ctx.Make(foundIn: Ctx.In, currentPath: src), default));
         Assert.Equal(new byte[] { 7 }, fs.Get(existing));
         Assert.True(fs.Has(src));
     }
 
     [Fact]
-    public async Task ApplyStamp_skips_when_already_in_ToSign_and_cleans_leftover_original()
+    public async Task ApplyStamp_skips_when_already_in_To_and_cleans_leftover_original()
     {
         var fs = new InMemoryFileStore();
         var stamped = Paths.Combine(Ctx.ToSign, "a.pdf");
@@ -155,7 +130,7 @@ public class StepTests
         fs.Add(stamped, Pdf);
         fs.Add(leftover, Pdf);   // сбой на прошлом опросе между записью и удалением
 
-        Assert.IsType<NextResult>(await Stamp(fs).ExecuteAsync(Ctx.Make(location: Dir.ToSign, currentPath: stamped), default));
+        Assert.IsType<NextResult>(await Stamp(fs).ExecuteAsync(Ctx.Make(foundIn: Ctx.ToSign, currentPath: stamped), default));
         Assert.False(fs.Has(leftover));
         Assert.True(fs.Has(stamped));
     }
@@ -167,16 +142,25 @@ public class StepTests
         var signed = Paths.Combine(Ctx.Signed, "a.pdf");
         fs.Add(signed, Pdf);
 
-        Assert.IsType<NextResult>(await Stamp(fs).ExecuteAsync(Ctx.Make(location: Dir.Signed, currentPath: signed), default));
+        Assert.IsType<NextResult>(await Stamp(fs).ExecuteAsync(Ctx.Make(foundIn: Ctx.Signed, currentPath: signed), default));
         Assert.Single(fs.AllPaths);
     }
+
+    [Fact]
+    public async Task ApplyStamp_without_folders_fails() =>
+        Assert.IsType<FailResult>(await new ApplyStamp(new InMemoryFileStore(), new FakeStampRenderer(), new FakeStamper())
+            .ExecuteAsync(Ctx.Make(foundIn: Ctx.In), default));
 
     // ---------- WaitForSignatureFile ----------
     private static (WaitForSignatureFile step, TestTime time, InMemoryFileStore fs) WaitSetup()
     {
         var time = new TestTime(new DateTime(2026, 10, 31, 12, 0, 0, DateTimeKind.Utc));
         var fs = new InMemoryFileStore();
-        return (new WaitForSignatureFile(fs, time) { StableFor = TimeSpan.FromSeconds(30), Timeout = TimeSpan.FromHours(24) }, time, fs);
+        return (new WaitForSignatureFile(fs, time)
+        {
+            ToSign = Ctx.ToSign, Signed = Ctx.Signed,
+            StableFor = TimeSpan.FromSeconds(30), Timeout = TimeSpan.FromHours(24)
+        }, time, fs);
     }
 
     [Fact]
@@ -186,7 +170,7 @@ public class StepTests
         var p = Paths.Combine(Ctx.ToSign, "a.pdf");
         fs.Add(p, Pdf, time.Now.AddHours(-3));
 
-        Assert.IsType<WaitResult>(await step.ExecuteAsync(Ctx.Make(location: Dir.ToSign, currentPath: p), default));
+        Assert.IsType<WaitResult>(await step.ExecuteAsync(Ctx.Make(foundIn: Ctx.ToSign, currentPath: p), default));
     }
 
     [Fact]
@@ -196,7 +180,7 @@ public class StepTests
         var p = Paths.Combine(Ctx.ToSign, "a.pdf");
         fs.Add(p, Pdf, time.Now.AddHours(-25));
 
-        Assert.IsType<FailResult>(await step.ExecuteAsync(Ctx.Make(location: Dir.ToSign, currentPath: p), default));
+        Assert.IsType<FailResult>(await step.ExecuteAsync(Ctx.Make(foundIn: Ctx.ToSign, currentPath: p), default));
     }
 
     [Fact]
@@ -206,7 +190,7 @@ public class StepTests
         var doc = Paths.Combine(Ctx.Signed, "a.pdf");
         fs.Add(doc, Pdf, time.Now.AddMinutes(-5));
         fs.Add(doc + ".sig", [1], time.Now.AddMinutes(-5));
-        var ctx = Ctx.Make(location: Dir.Signed, currentPath: doc);
+        var ctx = Ctx.Make(foundIn: Ctx.Signed, currentPath: doc);
 
         Assert.IsType<NextResult>(await step.ExecuteAsync(ctx, default));
         Assert.Equal(doc, ctx.State.CurrentPath);
@@ -219,17 +203,17 @@ public class StepTests
         var (step, time, fs) = WaitSetup();
         var doc = Paths.Combine(Ctx.Signed, "a.pdf");
         fs.Add(doc, Pdf, time.Now.AddMinutes(-5));
-        Assert.IsType<WaitResult>(await step.ExecuteAsync(Ctx.Make(location: Dir.Signed, currentPath: doc), default));
+        Assert.IsType<WaitResult>(await step.ExecuteAsync(Ctx.Make(foundIn: Ctx.Signed, currentPath: doc), default));
 
         fs.Add(doc + ".sig", [1], time.Now.AddSeconds(-5));
-        Assert.IsType<WaitResult>(await step.ExecuteAsync(Ctx.Make(location: Dir.Signed, currentPath: doc), default));
+        Assert.IsType<WaitResult>(await step.ExecuteAsync(Ctx.Make(foundIn: Ctx.Signed, currentPath: doc), default));
     }
 
     [Fact]
-    public async Task Wait_in_unexpected_location_fails()
+    public async Task Wait_in_unexpected_folder_fails()
     {
         var (step, _, _) = WaitSetup();
-        Assert.IsType<FailResult>(await step.ExecuteAsync(Ctx.Make(location: Dir.Incoming), default));
+        Assert.IsType<FailResult>(await step.ExecuteAsync(Ctx.Make(foundIn: Ctx.In), default));
     }
 
     // ---------- ReadSignatureFile / DeleteFile / MoveFile ----------
@@ -240,7 +224,7 @@ public class StepTests
         var doc = Paths.Combine(Ctx.Signed, "a.pdf");
         fs.Add(doc, Pdf);
         fs.Add(doc + ".sig", [9, 9]);
-        var ctx = Ctx.Make(location: Dir.Signed, currentPath: doc);
+        var ctx = Ctx.Make(foundIn: Ctx.Signed, currentPath: doc);
 
         Assert.IsType<NextResult>(await new ReadSignatureFile(fs).ExecuteAsync(ctx, default));
         Assert.Equal(Convert.ToBase64String([9, 9]), ctx.State.SignatureBase64);
@@ -276,14 +260,18 @@ public class StepTests
         fs.Add(Paths.Combine(Ctx.Result, "a.pdf"), [0]);
         var ctx = Ctx.Make(currentPath: src);
 
-        Assert.IsType<NextResult>(await new MoveFile(fs) { To = Dir.Result }.ExecuteAsync(ctx, default));
+        Assert.IsType<NextResult>(await new MoveFile(fs) { To = Ctx.Result }.ExecuteAsync(ctx, default));
         Assert.NotEqual(Paths.Combine(Ctx.Result, "a.pdf"), ctx.State.CurrentPath);
         Assert.Equal(new byte[] { 0 }, fs.Get(Paths.Combine(Ctx.Result, "a.pdf")));
         Assert.False(fs.Has(src));
     }
 
     [Fact]
-    public async Task MoveFile_missing_source_fails() =>
+    public async Task MoveFile_missing_source_or_target_folder_fails()
+    {
+        Assert.IsType<FailResult>(await new MoveFile(new InMemoryFileStore()) { To = Ctx.Result }
+            .ExecuteAsync(Ctx.Make(currentPath: Paths.Combine(Ctx.Signed, "a.pdf")), default));
         Assert.IsType<FailResult>(await new MoveFile(new InMemoryFileStore())
             .ExecuteAsync(Ctx.Make(currentPath: Paths.Combine(Ctx.Signed, "a.pdf")), default));
+    }
 }

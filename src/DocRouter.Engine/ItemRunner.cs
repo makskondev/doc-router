@@ -1,18 +1,16 @@
 using DocRouter.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace DocRouter.Engine;
 
 /// <summary>
-/// Проходит маршрут документа с первого шага. Состояние не сохраняется: Next → следующий шаг, Wait → тихо до следующего опроса,
+/// Проходит шаги типа документа с первого. Состояние не сохраняется: Next → следующий шаг, Wait → тихо до следующего опроса,
 /// Fail/исключение → лог + письмо, повтор на следующем опросе.
 /// </summary>
 public sealed class ItemRunner(
     IServiceProvider services,
-    RouteRegistry routes,
-    IOptions<RoutesOptions> routeOptions,
+    DocumentTypeRegistry types,
     INotifier notifier,
     ILogger<ItemRunner> log)
 {
@@ -20,12 +18,12 @@ public sealed class ItemRunner(
     {
         using var scope = log.BeginScope(new Dictionary<string, object?>
         {
-            ["route"] = item.Route, ["file"] = item.FileName, ["id"] = item.ExternalId
+            ["docType"] = item.DocType, ["file"] = item.FileName, ["id"] = item.ExternalId
         });
 
-        if (!routes.TryGet(item.Route, out var route) || !routeOptions.Value.TryGetValue(item.Route, out var routeCfg))
+        if (!types.TryGet(item.DocType, out var type))
         {
-            await FailAsync(item, "-", $"Для маршрута '{item.Route}' нет описания в коде или настроек в секции Routes", ct);
+            await FailAsync(item, "-", $"Тип документа '{item.DocType}' не описан в коде", ct);
             return;
         }
 
@@ -33,11 +31,10 @@ public sealed class ItemRunner(
         {
             Item = item,
             State = new ItemState { FileName = item.FileName },
-            Route = routeCfg,
             Logger = log
         };
 
-        foreach (var def in route.Steps)
+        foreach (var def in type.Steps)
         {
             ct.ThrowIfCancellationRequested();
 
@@ -74,7 +71,7 @@ public sealed class ItemRunner(
             }
         }
 
-        log.LogInformation("Документ обработан до конца маршрута");
+        log.LogInformation("Документ обработан до конца");
     }
 
     private async Task FailAsync(WorkItem item, string step, string reason, CancellationToken ct)

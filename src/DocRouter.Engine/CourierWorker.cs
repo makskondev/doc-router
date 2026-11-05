@@ -49,7 +49,7 @@ public sealed class CourierWorker(
             }
         }
 
-        var unique = items.GroupBy(i => (i.Route, i.ExternalId)).Select(g => g.First()).ToList();
+        var unique = items.GroupBy(i => (i.DocType, i.ExternalId)).Select(g => g.First()).ToList();
         log.LogInformation("Опрос: документов в работе {Count}", unique.Count);
 
         await Parallel.ForEachAsync(unique,

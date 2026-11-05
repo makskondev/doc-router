@@ -12,7 +12,6 @@ public static class InfrastructureRegistration
         services.Configure<SignatureServiceOptions>(cfg.GetSection("SignatureService"));
         services.Configure<OracleOptions>(cfg.GetSection("Oracle"));
         services.Configure<SmtpOptions>(cfg.GetSection("Smtp"));
-        services.Configure<StampsOptions>(cfg.GetSection("Stamps"));
 
         services.AddSingleton<IFileStore, SmbFileStore>();
         services.AddSingleton<IViewReader, OracleViewReader>();

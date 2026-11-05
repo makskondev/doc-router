@@ -97,26 +97,20 @@ public sealed class FakeStamper : IPdfStamper
 
 public static class Ctx
 {
-    public const string In = @"\\srv\docs\r\in";
-    public const string ToSign = @"\\srv\docs\r\tosign";
-    public const string Signed = @"\\srv\docs\r\signed";
-    public const string Result = @"\\srv\archive\r";
+    public const string In = @"\\srv\docs\in";
+    public const string ToSign = @"\\srv\docs\tosign";
+    public const string Signed = @"\\srv\docs\signed";
+    public const string Result = @"\\srv\archive";
 
-    public static RouteOptions Route() => new() { Incoming = In, ToSign = ToSign, Signed = Signed, Result = Result };
-
-    public static StepContext Make(string fileName = "a.pdf", Dir? location = null, string? currentPath = null,
-        RouteOptions? route = null)
+    public static WorkItem Item(string docType = "T", string fileName = "a.pdf", string id = "42") => new()
     {
-        var item = new WorkItem
-        {
-            Route = "R", FileName = fileName, ExternalId = "42", Source = SourceKind.View
-        };
-        return new StepContext
-        {
-            Item = item,
-            State = new ItemState { FileName = fileName, CurrentPath = currentPath, Location = location },
-            Route = route ?? Route(),
-            Logger = NullLogger.Instance
-        };
-    }
+        DocType = docType, FileName = fileName, ExternalId = id, Source = SourceKind.View
+    };
+
+    public static StepContext Make(string fileName = "a.pdf", string? foundIn = null, string? currentPath = null) => new()
+    {
+        Item = Item(fileName: fileName),
+        State = new ItemState { FileName = fileName, CurrentPath = currentPath, FoundIn = foundIn },
+        Logger = NullLogger.Instance
+    };
 }

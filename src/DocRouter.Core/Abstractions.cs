@@ -28,7 +28,6 @@ public sealed class StepContext
 {
     public required WorkItem Item { get; init; }
     public required ItemState State { get; init; }
-    public required RouteOptions Route { get; init; }
     public required ILogger Logger { get; init; }
 }
 
@@ -53,6 +52,12 @@ public static class Paths
 
     /// <summary>Имя файла из UNC-пути (Path.GetFileName на Linux не знает про обратный слэш).</summary>
     public static string FileName(string path) => path[(path.LastIndexOfAny(['\\', '/']) + 1)..];
+
+    /// <summary>Каталоги сравниваются без учёта регистра, слэшей и хвостового разделителя.</summary>
+    public static string NormalizeDir(string path) => path.Replace('/', '\\').TrimEnd('\\').ToLowerInvariant();
+
+    public static bool SameDir(string? a, string? b) =>
+        !string.IsNullOrEmpty(a) && !string.IsNullOrEmpty(b) && NormalizeDir(a) == NormalizeDir(b);
 
     public static string Directory(string path)
     {
@@ -122,6 +127,6 @@ public interface INotifier
 {
     /// <summary>Письмо о неудаче по документу (адресаты: маршрут + по умолчанию). Без ограничения частоты: на каждую неудачу.</summary>
     Task NotifyFailureAsync(WorkItem item, string step, string reason, CancellationToken ct);
-    /// <summary>Системная ошибка (источник недоступен и т.п.) — адресатам по умолчанию.</summary>
+    /// <summary>Системная ошибка (источник недоступен, некорректная запись и т.п.) — адресатам Mail__Default.</summary>
     Task NotifySystemAsync(string subject, string body, CancellationToken ct);
 }

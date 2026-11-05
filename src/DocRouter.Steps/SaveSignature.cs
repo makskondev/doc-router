@@ -11,7 +11,7 @@ public sealed class SaveSignature(ISignatureStore store) : IStep
             return StepResult.Fail("Нет подписи для сохранения");
 
         await store.SaveAsync(new SignatureSaveRequest(
-            ctx.Item.Route, ctx.Item.ExternalId, ctx.State.FileName,
+            ctx.Item.DocType, ctx.Item.ExternalId, ctx.State.FileName,
             Convert.FromBase64String(ctx.State.SignatureBase64), ctx.Item.Fields), ct);
 
         return StepResult.Next();

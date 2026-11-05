@@ -1,26 +1,26 @@
 namespace DocRouter.Core;
 
 public enum SourceKind { View, Directory }
-public enum Dir { Incoming, ToSign, Signed, Result }
 
-/// <summary>Документ, найденный источником на текущем опросе. Тип документа = маршрут. Состояния между опросами нет: «где документ» определяют папки и view.</summary>
+/// <summary>Документ, найденный источником на текущем опросе. Состояния между опросами нет: «где документ» определяют папки и view.</summary>
 public sealed class WorkItem
 {
-    public required string Route { get; init; }          // имя маршрута = тип документа
+    public required string DocType { get; init; }        // имя типа документа (= его описание в коде)
     public required string FileName { get; init; }
     public required string ExternalId { get; init; }     // ID файла из view; для каталога — имя файла
     public required SourceKind Source { get; init; }
-    public IReadOnlyDictionary<string, string> Fields { get; init; } = new Dictionary<string, string>();   // поля view (данные штампа и т.п.)
+    public IReadOnlyList<string> Recipients { get; init; } = [];   // адресаты ошибок этого типа
+    public IReadOnlyDictionary<string, string> Fields { get; init; } = new Dictionary<string, string>();   // поля view
 
-    public override string ToString() => $"{Route}/{FileName} ({ExternalId})";
+    public override string ToString() => $"{DocType}/{FileName} ({ExternalId})";
 }
 
-/// <summary>Состояние внутри одного прохода по маршруту (в памяти, не сохраняется).</summary>
+/// <summary>Состояние внутри одного прохода по шагам (в памяти, не сохраняется).</summary>
 public sealed class ItemState
 {
     public string FileName { get; set; } = "";
     public string? CurrentPath { get; set; }
-    public Dir? Location { get; set; }                   // где файл найден на этом проходе (ставит FindFile)
+    public string? FoundIn { get; set; }                 // папка, где FindFile нашёл файл на этом проходе
     public string? SignatureBase64 { get; set; }
     public Dictionary<string, string> Extra { get; set; } = new();
 }

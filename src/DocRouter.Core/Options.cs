@@ -4,64 +4,35 @@ public sealed class CourierOptions
 {
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromMinutes(10);
     public int MaxParallel { get; set; } = 4;
-    public int ReadinessMultiplier { get; set; } = 3;                 // «живой», если последний опрос был не позже N интервалов назад
-    public List<string> DefaultRecipients { get; set; } = new();      // получатели системных ошибок и «по умолчанию»
+    public int ReadinessMultiplier { get; set; } = 3;      // «жив», если последний опрос был не позже N интервалов назад
 }
 
-/// <summary>Маршрут = тип документа: его папки, штамп и адресаты ошибок.</summary>
-public sealed class RouteOptions
+/// <summary>
+/// Рабочие папки. Каждое свойство = переменная окружения Dirs__&lt;Имя&gt; (пути UNC пишутся как есть, без экранирования).
+/// Новая папка = новое свойство здесь + переменная в окружении; свойство без значения — ошибка при старте.
+/// </summary>
+public sealed class DirectoriesOptions
 {
-    public string? Incoming { get; set; }
-    public string? ToSign { get; set; }
-    public string? Signed { get; set; }
-    public string? Result { get; set; }
-    public string? Stamp { get; set; }                   // имя штампа из секции Stamps; по умолчанию = имя маршрута
-    public List<string> ErrorRecipients { get; set; } = new();   // адресаты ошибок (дополнительно к Courier:DefaultRecipients)
-
-    public string? TryGetDir(Dir dir) => dir switch
-    {
-        Dir.Incoming => Incoming,
-        Dir.ToSign => ToSign,
-        Dir.Signed => Signed,
-        Dir.Result => Result,
-        _ => null
-    };
-
-    public string GetDir(Dir dir) =>
-        TryGetDir(dir) is { Length: > 0 } d ? d : throw new InvalidOperationException($"Для маршрута не настроена папка {dir}");
+    public string Docs { get; set; } = "";             // \\fileserver\docs
+    public string Signed { get; set; } = "";           // \\fileserver\signed
+    public string Reports { get; set; } = "";          // \\fileserver\reports
+    public string DepoReportsIn { get; set; } = "";    // откуда берутся депозитарные отчёты
+    public string BrokReportsIn { get; set; } = "";    // откуда берутся брокерские отчёты
+    public string StampTemplates { get; set; } = "";   // локальный путь с PNG-шаблонами штампов (не SMB)
 }
 
-/// <summary>Секция "Routes": ключ = имя маршрута (из DocumentRoutes).</summary>
-public sealed class RoutesOptions : Dictionary<string, RouteOptions> { }
-
-public sealed class SourcesOptions
+/// <summary>Группы адресатов: Mail__&lt;Группа&gt;=a@x.ru;b@x.ru. Тип документа ссылается на группу в коде: NotifyTo(mail.Brokers).</summary>
+public sealed class MailOptions
 {
-    public List<ViewOptions> Views { get; set; } = new();
-    public List<DirectorySourceOptions> Directories { get; set; } = new();
+    public string Default { get; set; } = "";          // получают ВСЕ письма об ошибках и системные письма
+    public string Brokers { get; set; } = "";
+    public string Depo { get; set; } = "";
 }
 
-public sealed class ViewOptions
+public static class Recipients
 {
-    public string Name { get; set; } = "";               // имя вью в Oracle
-    public string IdColumn { get; set; } = "DOC_ID";     // ID файла (передаётся процедуре)
-    public string FileNameColumn { get; set; } = "FILE_NAME";
-    // Маршрут (= тип документа) записей вью: фиксированный для всего вью...
-    public string? Route { get; set; }
-    // ...или код типа из этой колонки. Route приоритетнее.
-    public string? DocTypeColumn { get; set; } = "DOC_TYPE";
-    // Код типа → имя маршрута. Если словарь задан, неизвестный код — ошибка (письмо на каждом опросе);
-    // если пуст, значение колонки считается именем маршрута. Сравнение без учёта регистра, пробелы по краям обрезаются.
-    public Dictionary<string, string> TypeMap { get; set; } = new();
-}
-
-/// <summary>Каталог-источник = Incoming маршрута (один каталог — один тип документа).</summary>
-public sealed class DirectorySourceOptions
-{
-    public string Route { get; set; } = "";
-    public bool RequireSignature { get; set; }          // true: файл приходит сразу с подписью (<имя>.sig рядом)
-    public string SignatureSuffix { get; set; } = ".sig";
-    public TimeSpan MinAge { get; set; } = TimeSpan.FromMinutes(1);   // защита от недокопированных файлов
-    public List<string> Extensions { get; set; } = new();             // пусто = любые
+    public static IReadOnlyList<string> Parse(string? value) =>
+        (value ?? "").Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 }
 
 public sealed class StampLine
@@ -72,9 +43,10 @@ public sealed class StampLine
     public float FontSize { get; set; } = 22;
 }
 
+/// <summary>Описание штампа (живёт в коде: StampCatalog).</summary>
 public sealed class StampOptions
 {
-    public string? TemplatePath { get; set; }
+    public string? TemplateFile { get; set; }  // PNG в папке Dirs__StampTemplates; нет — прозрачный холст Width×Height
     public int Width { get; set; } = 400;
     public int Height { get; set; } = 150;
     public string FontFamily { get; set; } = "DejaVu Sans";
@@ -82,14 +54,12 @@ public sealed class StampOptions
     public string DateFormat { get; set; } = "dd.MM.yyyy";
     public string? TimeZone { get; set; }
     public List<StampLine> Lines { get; set; } = new();
-    public int Page { get; set; } = -1;
+    public int Page { get; set; } = -1;        // <=0 — последняя страница
     public double X { get; set; } = 30;
     public double Y { get; set; } = 30;
     public double WidthPt { get; set; } = 160;
     public double HeightPt { get; set; } = 60;
 }
-
-public sealed class StampsOptions : Dictionary<string, StampOptions> { }
 
 public sealed class SmbOptions
 {

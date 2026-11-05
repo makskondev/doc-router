@@ -9,8 +9,8 @@ public static class CourierRegistration
     public static IServiceCollection AddDocRouterCourier(this IServiceCollection services, IConfiguration cfg)
     {
         services.Configure<CourierOptions>(cfg.GetSection("Courier"));
-        services.Configure<RoutesOptions>(cfg.GetSection("Routes"));
-        services.Configure<SourcesOptions>(cfg.GetSection("Sources"));
+        services.Configure<DirectoriesOptions>(cfg.GetSection("Dirs"));
+        services.Configure<MailOptions>(cfg.GetSection("Mail"));
 
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<CourierStatus>();
