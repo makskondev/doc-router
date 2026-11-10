@@ -1,8 +1,10 @@
+using DocRouter.Core;
+
 namespace DocRouter.Engine;
 
-/// <summary>Источник работы: обнаруживает документы и создаёт процессы (view, каталог).</summary>
+/// <summary>Источник работы: на каждом опросе возвращает документы, которые сейчас «в очереди» (view, каталог).</summary>
 public interface ISourcePoller
 {
     string Name { get; }
-    Task PollAsync(CancellationToken ct);
+    Task<IReadOnlyList<WorkItem>> DiscoverAsync(CancellationToken ct);
 }

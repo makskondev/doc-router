@@ -1,70 +1,36 @@
-using System.Text.Json;
-
 namespace DocRouter.Core;
 
-public enum RunStatus { Pending, Waiting, Failed, Completed, Cancelled }
 public enum SourceKind { View, Directory }
-public enum Dir { Incoming, ToSign, Signed, Result }
-public enum NotificationStatus { Pending, Sent, Failed }
 
-/// <summary>Контекст процесса (хранится в jsonb). Шаги обмениваются данными только через него.</summary>
-public sealed class RunContextData
+/// <summary>Документ, найденный источником на текущем опросе. Состояния между опросами нет: «где документ» определяют папки, view и архив подписей.</summary>
+public sealed class WorkItem
 {
-    public string FileName { get; set; } = "";          // исходное имя файла (сохраняем как есть)
-    public string? CurrentPath { get; set; }            // где файл лежит сейчас (UNC)
+    public required string DocType { get; init; }        // тип документа (= его описание в коде)
+    public required string FileName { get; init; }
+    public required string ExternalId { get; init; }     // ID записи из view; для папки — имя файла
+    public required SourceKind Source { get; init; }
+    public string Kind { get; init; } = "";              // «вид» для Oracle/архива (по умолчанию = имя типа)
+    public IReadOnlyList<string> Recipients { get; init; } = [];   // адресаты ошибок этого типа
+    public IReadOnlyDictionary<string, string> Fields { get; init; } = new Dictionary<string, string>();   // поля view / служебные поля папки
+
+    /// <summary>Поле view/папки по имени (регистр не важен).</summary>
+    public string? Field(string name) =>
+        Fields.FirstOrDefault(kv => string.Equals(kv.Key, name, StringComparison.OrdinalIgnoreCase)).Value;
+
+    public override string ToString() => $"{DocType}/{FileName} ({ExternalId})";
+}
+
+/// <summary>Состояние внутри одного прохода по шагам (в памяти, не сохраняется).</summary>
+public sealed class ItemState
+{
+    public string FileName { get; set; } = "";
+    public string? CurrentPath { get; set; }
+    public string? FoundIn { get; set; }                 // папка, где FindFile нашёл файл на этом проходе
+    public string? PlannedPath { get; set; }             // куда файл будет перемещён (известно ДО перемещения: путь нужен Oracle)
+    public string? ClientCode { get; set; }
+    public byte[]? Content { get; set; }                 // содержимое файла (читается один раз за проход)
+    public string? Sha256 { get; set; }
     public string? SignatureBase64 { get; set; }
-    public Dictionary<string, string> Extra { get; set; } = new();   // поля из view (данные штампа и т.п.), служебные флаги
-}
-
-/// <summary>Один документ на одном маршруте.</summary>
-public sealed class DocumentRun
-{
-    public Guid Id { get; set; } = Guid.NewGuid();
-    public string DocType { get; set; } = "";
-    public SourceKind Source { get; set; }
-    public string SourceKey { get; set; } = "";
-    public RunStatus Status { get; set; } = RunStatus.Pending;
-    public int StepIndex { get; set; }
-    public string StepName { get; set; } = "";
-    public int Attempt { get; set; }
-    public DateTime NextAttemptAt { get; set; } = DateTime.UtcNow;
-    public string? LockedBy { get; set; }
-    public DateTime? LockedUntil { get; set; }
-    public string ContextJson { get; set; } = "{}";
-    public string? Error { get; set; }
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
-    public DateTime? CompletedAt { get; set; }
-
-    private RunContextData? _ctx;
-    /// <summary>Не маппится в EF (см. DocRouterDb). Перед SaveChanges вызывать FlushContext().</summary>
-    public RunContextData Context => _ctx ??= JsonSerializer.Deserialize<RunContextData>(ContextJson) ?? new();
-    public void FlushContext() { if (_ctx is not null) ContextJson = JsonSerializer.Serialize(_ctx); }
-}
-
-public sealed class RunStepLog
-{
-    public long Id { get; set; }
-    public Guid RunId { get; set; }
-    public int StepIndex { get; set; }
-    public string StepName { get; set; } = "";
-    public DateTime StartedAt { get; set; }
-    public DateTime FinishedAt { get; set; }
-    public string Outcome { get; set; } = "";
-    public string? Error { get; set; }
-}
-
-/// <summary>Outbox писем: пишется в одной транзакции с состоянием процесса.</summary>
-public sealed class Notification
-{
-    public long Id { get; set; }
-    public Guid? RunId { get; set; }
-    public string Recipients { get; set; } = "";   // через ';'
-    public string Subject { get; set; } = "";
-    public string Body { get; set; } = "";
-    public NotificationStatus Status { get; set; } = NotificationStatus.Pending;
-    public int Attempts { get; set; }
-    public string? LastError { get; set; }
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    public DateTime? SentAt { get; set; }
+    public string? SignatureSource { get; set; }         // "rest" | "file"
+    public Dictionary<string, string> Extra { get; set; } = new();
 }

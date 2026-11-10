@@ -3,10 +3,8 @@
     <ProjectReference Include="..\DocRouter.Core\DocRouter.Core.csproj" />
     <PackageReference Include="SMBLibrary" Version="1.5.*" />
     <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.*" />
+    <PackageReference Include="Npgsql" Version="8.*" />
     <PackageReference Include="MailKit" Version="4.*" />
-    <PackageReference Include="PDFsharp" Version="6.*" />
-    <PackageReference Include="SkiaSharp" Version="2.88.*" />
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="2.88.*" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.*" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.0.*" />
     <InternalsVisibleTo Include="DocRouter.Tests" />

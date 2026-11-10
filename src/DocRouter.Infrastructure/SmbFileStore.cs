@@ -101,85 +101,37 @@ public sealed class SmbFileStore(IOptions<SmbOptions> options) : IFileStore
         return ms.ToArray();
     }, ct);
 
-    public Task<string> MoveUniqueAsync(string sourcePath, string targetDir, string targetFileName, CancellationToken ct) => Task.Run(() =>
+    public Task MoveAsync(string sourcePath, string targetPath, CancellationToken ct) => Task.Run(() =>
     {
         var src = SmbPath.Parse(sourcePath);
-        var dstDir = SmbPath.Parse(targetDir);
+        var dst = SmbPath.Parse(targetPath);
         using var s1 = new SmbSession(src, _o);
-        using var s2 = new SmbSession(dstDir, _o);
+        using var s2 = new SmbSession(dst, _o);
 
-        var name = targetFileName;
-        for (var attempt = 0; attempt < 10; attempt++)
+        // FILE_CREATE: упадёт, если файл существует → перезапись исключена
+        var st = s2.Store.CreateFile(out var hDst, out _, dst.Relative, AccessMask.GENERIC_WRITE | AccessMask.SYNCHRONIZE,
+            SmbAttrs.Normal, ShareAccess.None, CreateDisposition.FILE_CREATE, FileOpts, null);
+        if (st == NTStatus.STATUS_OBJECT_NAME_COLLISION) throw new IOException($"Файл уже существует: {dst.Full}");
+        Check(st, $"создание {dst.Full}");
+
+        long total;
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            var dst = dstDir.Combine(name);
-
-            // FILE_CREATE: упадёт, если файл существует → гонки и перезапись исключены
-            var st = s2.Store.CreateFile(out var hDst, out _, dst.Relative, AccessMask.GENERIC_WRITE | AccessMask.SYNCHRONIZE,
-                SmbAttrs.Normal, ShareAccess.None, CreateDisposition.FILE_CREATE, FileOpts, null);
-            if (st == NTStatus.STATUS_OBJECT_NAME_COLLISION) { name = WithSuffix(targetFileName, attempt); continue; }
-            Check(st, $"создание {dst.Full}");
-
-            long total;
-            try
-            {
-                total = CopyChunks(s1, src, s2, hDst, ct);
-            }
-            catch
-            {
-                s2.Store.CloseFile(hDst);
-                TryDelete(s2, dst);   // не оставляем недописанный файл в общем хранилище
-                throw;
-            }
+            total = CopyChunks(s1, src, s2, hDst, ct);
+        }
+        catch
+        {
             s2.Store.CloseFile(hDst);
-
-            // Контроль размера, затем удаляем источник
-            var size = SizeOf(s2, dst);
-            if (size != total) { TryDelete(s2, dst); throw new IOException($"Размер после копирования не совпал: {size} != {total}"); }
-
-            DeleteInSession(s1, src);
-            return dst.Full;
+            TryDelete(s2, dst);   // не оставляем недописанный файл в общем хранилище
+            throw;
         }
-        throw new IOException($"Не удалось подобрать уникальное имя в {targetDir} для {targetFileName}");
-    }, ct);
+        s2.Store.CloseFile(hDst);
 
-    public Task<string> WriteUniqueAsync(byte[] content, string targetDir, string fileName, CancellationToken ct) => Task.Run(() =>
-    {
-        var dstDir = SmbPath.Parse(targetDir);
-        using var s = new SmbSession(dstDir, _o);
+        // Контроль размера, затем удаляем источник
+        var size = SizeOf(s2, dst);
+        if (size != total) { TryDelete(s2, dst); throw new IOException($"Размер после копирования не совпал: {size} != {total}"); }
 
-        var name = fileName;
-        for (var attempt = 0; attempt < 10; attempt++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var dst = dstDir.Combine(name);
-            var st = s.Store.CreateFile(out var h, out _, dst.Relative, AccessMask.GENERIC_WRITE | AccessMask.SYNCHRONIZE,
-                SmbAttrs.Normal, ShareAccess.None, CreateDisposition.FILE_CREATE, FileOpts, null);
-            if (st == NTStatus.STATUS_OBJECT_NAME_COLLISION) { name = WithSuffix(fileName, attempt); continue; }
-            Check(st, $"создание {dst.Full}");
-
-            try
-            {
-                var maxWrite = (int)s.MaxWrite;
-                for (var pos = 0; pos < content.Length;)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    var chunk = content.AsSpan(pos, Math.Min(maxWrite, content.Length - pos)).ToArray();
-                    st = s.Store.WriteFile(out var written, h, pos, chunk);
-                    Check(st, $"запись {dst.Full}");
-                    pos += written;
-                }
-            }
-            catch
-            {
-                s.Store.CloseFile(h);
-                TryDelete(s, dst);
-                throw;
-            }
-            s.Store.CloseFile(h);
-            return dst.Full;
-        }
-        throw new IOException($"Не удалось подобрать уникальное имя в {targetDir} для {fileName}");
+        DeleteInSession(s1, src);
     }, ct);
 
     public Task DeleteAsync(string path, CancellationToken ct) => Task.Run(() =>
@@ -190,15 +142,6 @@ public sealed class SmbFileStore(IOptions<SmbOptions> options) : IFileStore
     }, ct);
 
     // ---------- helpers ----------
-
-    // name.pdf → name_20261031_153045.pdf; при повторной коллизии добавляется счётчик
-    private static string WithSuffix(string fileName, int attempt)
-    {
-        var stem = Path.GetFileNameWithoutExtension(fileName);
-        var ext = Path.GetExtension(fileName);
-        var ts = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        return attempt == 0 ? $"{stem}_{ts}{ext}" : $"{stem}_{ts}_{attempt}{ext}";
-    }
 
     private static void ReadTo(SmbSession s, SmbPath p, Stream target, CancellationToken ct)
     {

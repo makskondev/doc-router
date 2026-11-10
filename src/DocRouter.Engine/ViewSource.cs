@@ -1,57 +1,86 @@
 using DocRouter.Core;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace DocRouter.Engine;
 
-/// <summary>Опрос Oracle-вью (очередь: запись есть → документ к обработке). Тип: поле вью или фиксированный тип для вью.</summary>
+/// <summary>
+/// Опрос Oracle-вью (очередь: запись есть → документ не обработан до конца; запись исчезает после сохранения подписи).
+/// Каждое вью читается один раз за опрос. Во вью могут быть несколько типов и коды, которых сервис не обрабатывает:
+/// такие записи пропускаются (без писем), сводка по пропущенным кодам пишется в лог.
+/// ID файла из вью передаётся хранимой процедуре.
+/// </summary>
 public sealed class ViewSource(
     IViewReader reader,
-    RunFactory factory,
-    RouteRegistry routes,
-    IOptions<SourcesOptions> sources,
+    INotifier notifier,
+    DocumentTypeRegistry types,
     ILogger<ViewSource> log) : ISourcePoller
 {
     public string Name => "views";
 
-    public async Task PollAsync(CancellationToken ct)
+    public async Task<IReadOnlyList<WorkItem>> DiscoverAsync(CancellationToken ct)
     {
-        foreach (var v in sources.Value.Views)
+        var items = new List<WorkItem>();
+
+        foreach (var group in types.All.Where(t => t.View is not null).GroupBy(t => t.View!.View, StringComparer.OrdinalIgnoreCase))
         {
             IReadOnlyList<ViewRecord> rows;
-            try { rows = await reader.ReadAsync(v.Name, ct); }
+            try { rows = await reader.ReadAsync(group.Key, ct); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                log.LogError(ex, "Не удалось прочитать вью {View}", v.Name);
+                log.LogError(ex, "Не удалось прочитать вью {View}", group.Key);
+                await notifier.NotifySystemAsync($"[DocRouter] Вью {group.Key} недоступно", ex.Message, ct);
                 continue;
             }
 
-            var created = 0;
+            var skipped = new SortedDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             foreach (var row in rows)
             {
-                var id = row.Get(v.IdColumn);
-                var fileName = row.Get(v.FileNameColumn);
-                var docType = v.FixedDocType ?? (v.DocTypeColumn is null ? null : row.Get(v.DocTypeColumn));
-
-                if (id is null || fileName is null || docType is null)
+                var handled = false;
+                foreach (var t in group)
                 {
-                    log.LogWarning("Вью {View}: запись без id/имени файла/типа пропущена", v.Name);
-                    continue;
+                    var def = t.View!;
+                    if (def.TypeColumn is not null)
+                    {
+                        var code = row.Get(def.TypeColumn)?.Trim();
+                        if (code is null || !string.Equals(code, def.Code, StringComparison.OrdinalIgnoreCase)) continue;
+                    }
+
+                    handled = true;
+                    var id = row.Get(def.IdColumn);
+                    var fileName = row.Get(def.NameColumn);
+                    if (id is null || fileName is null)
+                    {
+                        log.LogWarning("Вью {View}: запись типа {Type} без ID или имени файла пропущена", group.Key, t.Name);
+                        await notifier.NotifySystemAsync($"[DocRouter] Вью {group.Key}: некорректная запись",
+                            $"Тип {t.Name}: ID={id ?? "—"}, файл={fileName ?? "—"} (колонки {def.IdColumn}, {def.NameColumn}).", ct);
+                        continue;
+                    }
+
+                    items.Add(new WorkItem
+                    {
+                        DocType = t.Name,
+                        FileName = fileName,
+                        ExternalId = id,
+                        Source = SourceKind.View,
+                        Kind = t.Kind,
+                        Recipients = t.Recipients,
+                        Fields = row.Fields.Where(kv => kv.Value is not null)
+                            .ToDictionary(kv => kv.Key, kv => kv.Value!, StringComparer.OrdinalIgnoreCase)
+                    });
                 }
-                if (!routes.TryGet(docType, out _))
+
+                if (!handled)
                 {
-                    log.LogWarning("Вью {View}: для типа {Type} нет маршрута (id {Id})", v.Name, docType, id);
-                    continue;
+                    var typeColumn = group.First().View!.TypeColumn;
+                    var key = (typeColumn is null ? null : row.Get(typeColumn)?.Trim()) ?? "(пусто)";
+                    skipped[key] = skipped.GetValueOrDefault(key) + 1;
                 }
-
-                var extra = row.Fields.Where(kv => kv.Value is not null).ToDictionary(kv => kv.Key, kv => kv.Value!);
-                extra["ExternalId"] = id;
-                extra["View"] = v.Name;
-
-                if (await factory.TryCreateAsync(docType, SourceKind.View, $"{v.Name}:{id}", fileName, extra, ct))
-                    created++;
             }
-            log.LogInformation("Вью {View}: записей {Count}, новых процессов {Created}", v.Name, rows.Count, created);
+
+            log.LogInformation("Вью {View}: записей {Count}, чужих типов пропущено {Skipped}", group.Key, rows.Count, skipped.Values.Sum());
+            if (skipped.Count > 0)
+                log.LogDebug("Вью {View}: пропущенные коды {Codes}", group.Key, string.Join(", ", skipped.Select(kv => $"{kv.Key}×{kv.Value}")));
         }
+        return items;
     }
 }

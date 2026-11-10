@@ -4,41 +4,40 @@ using DocRouter.Host;
 using DocRouter.Infrastructure;
 using DocRouter.Routes;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Logging.AddJsonConsole();   // v1: стандартный ILogger в stdout, без Serilog/OpenTelemetry
+builder.Logging.AddJsonConsole(o => o.IncludeScopes = true);   // v1: только логи в stdout (тип, файл, ID — в scope)
 
-builder.Services.AddSingleton(DocumentRoutes.Build());              // маршруты (код)
-builder.Services.AddDocRouterEngine(builder.Configuration);         // PostgreSQL, исполнитель, воркеры
-builder.Services.AddDocRouterInfrastructure(builder.Configuration); // SMB, Oracle, REST-подпись, SMTP
+builder.Services.AddDocRouterCourier(builder.Configuration);         // цикл курьера, источники, письма
+builder.Services.AddDocRouterInfrastructure(builder.Configuration);  // SMB, Oracle, PostgreSQL-архив подписей, REST-подпись, SMTP
+
+// Типы документов описаны в коде; рабочие папки и группы адресатов приходят из окружения (Dirs__*, Mail__*)
+builder.Services.AddSingleton(sp => DocumentDefinitions.Build(
+    sp.GetRequiredService<IOptions<DirectoriesOptions>>().Value,
+    sp.GetRequiredService<IOptions<MailOptions>>().Value));
 
 builder.Services.AddHealthChecks()
-    .AddDbContextCheck<DocRouterDb>("postgres", tags: ["ready"])
+    .AddCheck<CourierReadinessCheck>("courier", tags: ["ready"])
     .AddCheck<DependenciesHealthCheck>("dependencies", tags: ["deps"]);
 
 var app = builder.Build();
 
-// Валидация конфигурации на старте: ошибка в конфиге должна ронять сервис сразу, а не ночью
-var routes = app.Services.GetRequiredService<RouteRegistry>();
-var types = app.Services.GetRequiredService<IOptions<DocumentTypesOptions>>().Value;
-foreach (var type in routes.DocTypes)
-{
-    if (!types.TryGetValue(type, out var t))
-        throw new InvalidOperationException($"Для типа '{type}' нет секции DocumentTypes в конфигурации");
-    if (string.IsNullOrWhiteSpace(t.Incoming) || string.IsNullOrWhiteSpace(t.Result))
-        throw new InvalidOperationException($"Тип '{type}': должны быть заданы Incoming и Result");
-}
+// Fail-fast на старте: сначала настройки окружения, потом описание типов
+var missing = ConfigCheck.MissingSettings(
+    app.Services.GetRequiredService<IOptions<DirectoriesOptions>>().Value,
+    app.Services.GetRequiredService<IOptions<MailOptions>>().Value,
+    app.Services.GetRequiredService<IOptions<PostgresOptions>>().Value);
+if (missing.Count > 0)
+    throw new InvalidOperationException("Не хватает настроек окружения:\n" + string.Join("\n", missing));
 
-if (app.Configuration.GetValue<bool>("Database:AutoMigrate"))
-{
-    await using var scope = app.Services.CreateAsyncScope();
-    await scope.ServiceProvider.GetRequiredService<DocRouterDb>().Database.MigrateAsync();
-}
+_ = app.Services.GetRequiredService<DocumentTypeRegistry>();   // проверка описания типов (источники, шаги, дубли, маски)
 
-app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });                    // процесс жив
-app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = r => r.Tags.Contains("ready") }); // только PostgreSQL
-app.MapHealthChecks("/health/deps", new HealthCheckOptions { Predicate = r => r.Tags.Contains("deps") });   // диагностика: SMB, Oracle (не для probe)
+// Схема архива подписей (одна таблица, CREATE TABLE IF NOT EXISTS). Без доступного PostgreSQL сервис не стартует.
+await app.Services.GetRequiredService<ISignatureArchive>().EnsureSchemaAsync(app.Lifetime.ApplicationStopping);
+
+app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });                      // процесс жив
+app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = r => r.Tags.Contains("ready") });   // цикл опроса не завис
+app.MapHealthChecks("/health/deps", new HealthCheckOptions { Predicate = r => r.Tags.Contains("deps") });     // диагностика: SMB, Oracle (не для probe)
 
 app.Run();

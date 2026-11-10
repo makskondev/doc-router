@@ -2,7 +2,7 @@ using DocRouter.Core;
 
 namespace DocRouter.Steps;
 
-/// <summary>Читает файл подписи (<CurrentPath><суффикс>, рядом с файлом) в контекст. Для сценариев A и D.</summary>
+/// <summary>Читает файл подписи (<CurrentPath><суффикс>, рядом с файлом) в память. Документы 3 и 4 приходят уже подписанными.</summary>
 public sealed class ReadSignatureFile(IFileStore files) : IStep
 {
     public string SignatureSuffix { get; set; } = ".sig";
@@ -16,6 +16,7 @@ public sealed class ReadSignatureFile(IFileStore files) : IStep
         if (bytes.Length == 0) return StepResult.Fail($"Файл подписи {sigPath} пустой");
 
         ctx.State.SignatureBase64 = Convert.ToBase64String(bytes);
+        ctx.State.SignatureSource = "file";
         ctx.State.Extra["sigPath"] = sigPath;
         return StepResult.Next();
     }

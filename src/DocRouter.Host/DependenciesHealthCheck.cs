@@ -4,9 +4,9 @@ using Microsoft.Extensions.Options;
 
 namespace DocRouter.Host;
 
-/// <summary>Диагностика внешних зависимостей. Не используется как readiness: сбой SMB/Oracle не должен выводить поды из балансировки.</summary>
+/// <summary>Диагностика внешних зависимостей. Не используется как readiness: сбой SMB/Oracle не должен перезапускать под.</summary>
 public sealed class DependenciesHealthCheck(
-    IFileStore files, IViewReader views, IOptions<DocumentTypesOptions> types) : IHealthCheck
+    IFileStore files, IViewReader views, ISignatureArchive archive, IOptions<DirectoriesOptions> dirs) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken ct = default)
     {
@@ -15,14 +15,16 @@ public sealed class DependenciesHealthCheck(
         try { await views.PingAsync(ct); }
         catch (Exception ex) { problems["oracle"] = ex.Message; }
 
-        foreach (var (type, t) in types.Value)
+        try { await archive.PingAsync(ct); }
+        catch (Exception ex) { problems["postgres"] = ex.Message; }
+
+        // Все UNC-папки из Dirs__*
+        foreach (var p in typeof(DirectoriesOptions).GetProperties().Where(p => p.PropertyType == typeof(string)))
         {
-            foreach (var (name, dir) in new[] { ("Incoming", t.Incoming), ("Result", t.Result) })
-            {
-                if (string.IsNullOrEmpty(dir)) continue;
-                try { await files.ListAsync(dir, ct); }
-                catch (Exception ex) { problems[$"smb:{type}:{name}"] = ex.Message; }
-            }
+            var path = (string?)p.GetValue(dirs.Value);
+            if (string.IsNullOrEmpty(path) || !path.StartsWith(@"\\")) continue;
+            try { await files.ListAsync(path, ct); }
+            catch (Exception ex) { problems[$"smb:{p.Name}"] = ex.Message; }
         }
 
         return problems.Count == 0

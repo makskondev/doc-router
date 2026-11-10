@@ -1,90 +1,38 @@
 namespace DocRouter.Core;
 
-public sealed class EngineOptions
+public sealed class CourierOptions
 {
-    public TimeSpan PollInterval { get; set; } = TimeSpan.FromMinutes(10);   // опрос view/каталогов и повторные проверки ожидания
-    public TimeSpan TickInterval { get; set; } = TimeSpan.FromSeconds(30);   // как часто воркер забирает готовые процессы
-    public int BatchSize { get; set; } = 20;
+    public TimeSpan PollInterval { get; set; } = TimeSpan.FromMinutes(10);
     public int MaxParallel { get; set; } = 4;
-    public TimeSpan LeaseDuration { get; set; } = TimeSpan.FromMinutes(15);
-    public int MaxTransientAttempts { get; set; } = 5;
-    public int[] BackoffMinutes { get; set; } = [1, 5, 15, 60, 240];
-    public List<string> DefaultRecipients { get; set; } = new();             // получатели «по умолчанию» (дополнительно к типу)
+    public int ReadinessMultiplier { get; set; } = 3;      // «жив», если последний опрос был не позже N интервалов назад
 }
 
-public sealed class DocumentTypeOptions
+/// <summary>
+/// Рабочие папки. Каждое свойство = переменная окружения Dirs__&lt;Имя&gt; (пути UNC пишутся как есть, без экранирования).
+/// Новая папка = новое свойство здесь + переменная в окружении; свойство без значения — ошибка при старте.
+/// </summary>
+public sealed class DirectoriesOptions
 {
-    public string? Incoming { get; set; }
-    public string? ToSign { get; set; }
-    public string? Signed { get; set; }
-    public string? Result { get; set; }
-    public List<string> ErrorRecipients { get; set; } = new();
-
-    public string GetDir(Dir dir) => (dir switch
-    {
-        Dir.Incoming => Incoming,
-        Dir.ToSign => ToSign,
-        Dir.Signed => Signed,
-        Dir.Result => Result,
-        _ => null
-    }) ?? throw new InvalidOperationException($"Для типа не настроена папка {dir}");
+    public string BrokRep { get; set; } = "";          // \\fd\brok_rep
+    public string BrokRepEmail { get; set; } = "";     // \\fd\brok_rep\email
+    public string SignedDocs { get; set; } = "";       // \\fd\signed_docs
+    public string DepoReports { get; set; } = "";      // \\fd\depo_reports
+    public string WasSignedDepo { get; set; } = "";    // \\fd\sign_proc\was_signed\depo
+    public string WasSignedBrok { get; set; } = "";    // \\fd\sign_proc\was_signed\brok
 }
 
-/// <summary>Секция "DocumentTypes": ключ = тип документа.</summary>
-public sealed class DocumentTypesOptions : Dictionary<string, DocumentTypeOptions> { }
-
-public sealed class SourcesOptions
+/// <summary>Группы адресатов: Mail__&lt;Группа&gt;=a@x.ru;b@x.ru. Тип документа ссылается на группу в коде: NotifyTo(mail.Brokers).</summary>
+public sealed class MailOptions
 {
-    public List<ViewOptions> Views { get; set; } = new();
-    public List<DirectorySourceOptions> Directories { get; set; } = new();
+    public string Default { get; set; } = "";          // получают ВСЕ письма об ошибках и системные письма
+    public string Brokers { get; set; } = "";
+    public string Depo { get; set; } = "";
 }
 
-/// <summary>Каталог-источник: файл появился в Incoming типа → процесс. Один каталог = один тип.</summary>
-public sealed class DirectorySourceOptions
+public static class Recipients
 {
-    public string DocType { get; set; } = "";
-    public bool RequireSignature { get; set; }                  // true: файл приходит сразу с подписью (<имя>.sig рядом)
-    public string SignatureSuffix { get; set; } = ".sig";
-    public TimeSpan MinAge { get; set; } = TimeSpan.FromMinutes(1);   // файл не меняется не менее этого времени (защита от недокопированных)
-    public List<string> Extensions { get; set; } = new();       // пусто = любые; иначе например [".pdf", ".xml"]
-}
-
-public sealed class StampLine
-{
-    public string Text { get; set; } = "";     // с подстановками {ПОЛЕ_ИЗ_VIEW} и {Date}
-    public float X { get; set; }
-    public float Y { get; set; }               // базовая линия текста, пиксели картинки
-    public float FontSize { get; set; } = 22;
-}
-
-public sealed class StampOptions
-{
-    public string? TemplatePath { get; set; }  // PNG-шаблон; нет — прозрачный холст Width×Height
-    public int Width { get; set; } = 400;
-    public int Height { get; set; } = 150;
-    public string FontFamily { get; set; } = "DejaVu Sans";
-    public string Color { get; set; } = "#1F3A93";
-    public string DateFormat { get; set; } = "dd.MM.yyyy";
-    public string? TimeZone { get; set; }      // например "Europe/Moscow"; пусто = локальная зона контейнера
-    public List<StampLine> Lines { get; set; } = new();
-    // Размещение на PDF (пункты, от левого верхнего угла)
-    public int Page { get; set; } = -1;        // <=0 — последняя страница
-    public double X { get; set; } = 30;
-    public double Y { get; set; } = 30;
-    public double WidthPt { get; set; } = 160;
-    public double HeightPt { get; set; } = 60;
-}
-
-/// <summary>Секция "Stamps": ключ = имя штампа (ссылается ApplyStamp.Stamp).</summary>
-public sealed class StampsOptions : Dictionary<string, StampOptions> { }
-
-public sealed class ViewOptions
-{
-    public string Name { get; set; } = "";             // имя вью в Oracle
-    public string IdColumn { get; set; } = "DOC_ID";
-    public string FileNameColumn { get; set; } = "FILE_NAME";
-    public string? DocTypeColumn { get; set; } = "DOC_TYPE";   // тип из поля вью...
-    public string? FixedDocType { get; set; }                  // ...или фиксированный тип для этого вью (приоритетнее)
+    public static IReadOnlyList<string> Parse(string? value) =>
+        (value ?? "").Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 }
 
 public sealed class SmbOptions
@@ -104,7 +52,14 @@ public sealed class SignatureServiceOptions
 public sealed class OracleOptions
 {
     public string ConnectionString { get; set; } = "";
-    public string SaveSignatureProcedure { get; set; } = "PKG_DOCS.SAVE_SIGNATURE";
+    public string MarkSignedProcedure { get; set; } = "PKG_DOCS.MARK_REPORT_SIGNED";      // семейство 1: подпись + отметка «подписан»
+    public string CreateRecordProcedure { get; set; } = "PKG_DOCS.CREATE_SIGNED_FILE";    // семейства 2-4: запись о файле + подпись
+}
+
+/// <summary>Собственное хранилище подписей и метаданных (независимо от Oracle).</summary>
+public sealed class PostgresOptions
+{
+    public string ConnectionString { get; set; } = "";
 }
 
 public sealed class SmtpOptions

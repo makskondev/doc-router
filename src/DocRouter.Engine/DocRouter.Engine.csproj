@@ -1,9 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="..\DocRouter.Core\DocRouter.Core.csproj" />
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.*" />
-    <PackageReference Include="EFCore.NamingConventions" Version="8.0.*" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.*" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.0.*" />
+      <InternalsVisibleTo Include="DocRouter.Tests" />
   </ItemGroup>
 </Project>

@@ -1,47 +1,42 @@
-# DocRouter — сервис «водитель документов»
+# DocRouter — сервис-«курьер» для документов
 
-Каркас v1: свой движок процессов на PostgreSQL, маршруты в коде, SMB через SMBLibrary, Oracle (view + хранимая процедура), REST-подпись, письма через outbox.
+Один сервис (ASP.NET Core, 1 реплика в k8s), который «водит» файлы по шагам: подпись (REST) → проверка → архив подписей (PostgreSQL) → запись в Oracle → перемещение. **Состояние процесса не хранится**: «где документ» определяют папки и вью; при сбое шаги проходятся заново на следующем опросе, письмо уходит на каждую неудачу. **PostgreSQL — независимый архив подписей и метаданных**, а не движок процессов.
 
 > Каркас написан без компиляции (в среде не было .NET SDK). Первый `dotnet build` может показать мелкие правки (версии пакетов, API SMBLibrary).
 
 ## Быстрый старт
 ```sh
-./create-solution.sh                      # создаёт DocRouter.sln
-dotnet build
-dotnet test
-dotnet ef migrations add Init -p src/DocRouter.Engine -s src/DocRouter.Host
-dotnet run --project src/DocRouter.Host   # Database:AutoMigrate=true применит миграцию
+./create-solution.sh && dotnet build && dotnet test
+dotnet run --project src/DocRouter.Host
 ```
-Секреты (пароли SMB/Oracle/Postgres/SMTP) задавайте через переменные окружения k8s: `Smb__Password`, `Oracle__ConnectionString`, `ConnectionStrings__Postgres`.
+k8s: `replicas: 1`, `strategy: Recreate`; probes: `/health/live`, `/health/ready` (цикл опроса жив), `/health/deps` — только диагностика (SMB, Oracle, PostgreSQL).
 
-## Где что
-| Проект | Назначение |
-|---|---|
-| Core | `IStep`, `StepResult`, билдер маршрутов, модели, интерфейсы (SMB, подпись, Oracle, почта) |
-| Engine | EF-хранилище состояния, захват процессов (lease + SKIP LOCKED), исполнитель, воркеры, ViewSource, outbox |
-| Steps | Шаги: FindFile, ApplyStamp, WaitForSignatureFile, ReadSignatureFile, RestSign, VerifySignature, SaveSignature, MoveFile, DeleteFile |
-| Routes | **Маршруты по типам документов** — основной файл разработчика (`DocumentRoutes.cs`) |
-| Infrastructure | SmbFileStore, RestSignatureService, Oracle (view/процедура), SMTP |
-| Tests | xUnit: билдер маршрутов, отбор файлов, шаги (на in-memory IFileStore), исполнитель (EF InMemory) |
-| Host | ASP.NET Core, DI, healthchecks (`/health/live`, `/health/ready`, `/health/deps`) |
+## Типы документов (в коде: `src/DocRouter.Routes/DocumentDefinitions.cs`)
+| Семейство | Тип | Источник | Цепочка шагов |
+|---|---|---|---|
+| 1. Брокерские отчёты | `BROK_REP` | вью `report_log_vw` | FindFile (папка по полям: pdf → signed_docs; EMAIL=1 → brok_rep\email; иначе brok_rep) → RestSign → Verify → ArchiveSignature → MarkReportSigned. Файл не перемещается |
+| 2. Депозитарные отчёты | `DEPO_REP_DO`, `DEPO_REP_JRN` | папка depo_reports, маски `*_ДО.*`, `*_жрн.*` | FindFile → ExtractClientCode → RestSign → Verify → PlanTargetPath → ArchiveSignature → CreateFileRecord → MoveFile (signed_docs) |
+| 3. Депозитарные документы | `DEPO_NOTICE`, `DEPO_APPLICATION` | папка was_signed\depo + `.sig` | FindFile → ReadSignatureFile → Verify → PlanTargetPath → ArchiveSignature → CreateFileRecord → MoveFile → DeleteFile(.sig) |
+| 4. Брокерские документы | `BROK_NOTICE`, `BROK_APPLICATION` | папка was_signed\brok + `.sig` | то же, что 3 |
 
-## Добавить новый тип документа
-1. Секция в `DocumentTypes` (папки, получатели писем).
-2. Строка в `DocumentRoutes.cs`: `r.For("NewType").UseTemplate(...)` или своя цепочка шагов.
-3. Если тип приходит из view — поле `DOC_TYPE` во вью или `FixedDocType` в `Sources:Views`.
+Для 3 и 4: документ без `.sig` дольше 24 часов → письмо «подпись не получена» (на каждом опросе, пока не появится).
 
-## Ручное вмешательство (v1, без UI)
-Процесс в `Failed` → `UPDATE runs SET status='Pending', attempt=0, next_attempt_at=now() WHERE id='...'`
-(перезапуск с шага N: дополнительно `step_name='<ИмяШага>'`, `step_index=N`); отмена: `status='Cancelled'`.
-Журнал: таблица `run_steps`.
+Типы — первоклассные сущности: у каждого своя маска, «вид» (`.Kind("ДО")`, уходит в Oracle и архив), группа адресатов (`.NotifyTo(mail.Depo)`). Общая цепочка нескольких типов — обычная локальная функция (`DepoReport(...)`, `SignedDoc(...)`).
 
-## Сценарии → маршруты (см. `DocumentRoutes.cs`)
-| | Источник | Цепочка |
-|---|---|---|
-| A | view | FindFile → ApplyStamp → WaitForSignatureFile (.sig, до 24 ч) → ReadSignatureFile → Verify → Save → MoveFile(Result) → DeleteFile(.sig) |
-| B | view | FindFile → RestSign → Verify → Save → MoveFile(Result) |
-| C | каталог (`RequireSignature=false`) | то же, что B |
-| D | каталог (`RequireSignature=true`, `<имя>.sig` рядом) | FindFile → ReadSignatureFile → Verify → Save → MoveFile(Result) → DeleteFile(.sig) |
+## Порядок действий (почему он такой)
+1. **Подпись берётся из архива PostgreSQL, если документ уже подписывали** (тот же тип, источник и SHA-256 содержимого): повторный опрос после сбоя не подписывает заново, а архив и Oracle не расходятся.
+2. **ArchiveSignature** (PostgreSQL) идёт сразу после проверки — собственная копия подписи появляется первой.
+3. **PlanTargetPath → CreateFileRecord → MoveFile**: Oracle нужен путь сохранённого документа, поэтому он определяется ДО перемещения (детерминированно: при коллизии имени — суффикс даты-времени изменения исходного файла). Перемещение — последнее действие, и триггером служит сам файл, поэтому любой сбой лечится повтором.
 
-Штамп: секция `Stamps:<имя>` (PNG-шаблон + строки с подстановками `{ПОЛЕ_ВЬЮ}`, `{Date}`), имя указывается в `ApplyStamp.Stamp`.
-Шаблон штампа в контейнере монтируйте томом/ConfigMap (путь `TemplatePath`).
+## Конфигурация — плоские переменные окружения (`deploy/env.example`)
+`Dirs__*` (папки; свойства `DirectoriesOptions`), `Mail__*` (группы адресатов; `Mail__Default` получает все письма), `Postgres__ConnectionString`, `Oracle__*` (в т.ч. две процедуры), `Smb__*`, `SignatureService__*`, `Smtp__*`, `Courier__PollInterval`. Пути UNC пишутся как есть. На старте сервис проверяет, что всё задано, описание типов корректно (источники, шаги, дубли, маски в общих папках), и создаёт таблицу архива.
+
+## Архив PostgreSQL
+Таблица `signed_documents` (создаётся при старте): тип, источник, ключ источника, имя файла, код клиента, вид, SHA-256, размер, путь источника, итоговый путь, подпись (bytea), откуда подпись (rest/file), даты. Уникальность: (тип, ключ источника, SHA-256) — запись идемпотентна, первая подпись сохраняется.
+
+## Ограничения (осознанные)
+- Письмо на каждую неудачу: при недоступности SMB/REST это письмо на каждый документ на каждом опросе.
+- Имена файлов должны быть уникальны среди документов, находящихся в работе в одной папке (документ ищется по имени).
+- После перемещения файла отдельно остаётся удаление `.sig`: сбой между ними оставит «осиротевший» `.sig` (на обработку не влияет).
+- Если после создания записи в Oracle путь назначения успеют занять (редкая гонка), повтор определит новый путь — процедура Oracle должна переживать повторный вызов.
+- Одна реплика; перезапуск пода безопасен.
