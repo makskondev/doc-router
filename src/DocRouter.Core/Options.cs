@@ -18,7 +18,10 @@ public sealed class DirectoriesOptions
     public string SignedDocs { get; set; } = "";       // \\fd\signed_docs
     public string DepoReports { get; set; } = "";      // \\fd\depo_reports
     public string WasSignedDepo { get; set; } = "";    // \\fd\sign_proc\was_signed\depo
-    public string WasSignedBrok { get; set; } = "";    // \\fd\sign_proc\was_signed\brok
+    public string WasSignedBrok { get; set; } = "";    // \\fd\sign_proc\was_signed\brok (сюда ПО ручного подписания кладёт файл + .sig)
+    public string BrokDocs { get; set; } = "";         // \\fd\brok\docs (откуда берём заявление для ручного подписания)
+    public string BrokToSign { get; set; } = "";       // \\fd\sign_proc\to_sign\brok (папка «на ручное подписание»)
+    public string CorpSignedDoc { get; set; } = "";    // \\fd\corp\signed_doc (итоговая папка заявлений; не то же, что SignedDocs)
 }
 
 /// <summary>Группы адресатов: Mail__&lt;Группа&gt;=a@x.ru;b@x.ru. Тип документа ссылается на группу в коде: NotifyTo(mail.Brokers).</summary>

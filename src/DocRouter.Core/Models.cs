@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace DocRouter.Core;
 
 public enum SourceKind { View, Directory }
@@ -20,7 +22,10 @@ public sealed class WorkItem
     public override string ToString() => $"{DocType}/{FileName} ({ExternalId})";
 }
 
-/// <summary>Состояние внутри одного прохода по шагам (в памяти, не сохраняется).</summary>
+/// <summary>
+/// Состояние документа внутри прохода по шагам. У обычных типов живёт только в памяти; у типов с .Stateful() сохраняется в PostgreSQL
+/// после каждого успешного шага и загружается в начале следующего опроса (содержимое файла не сохраняется).
+/// </summary>
 public sealed class ItemState
 {
     public string FileName { get; set; } = "";
@@ -28,7 +33,7 @@ public sealed class ItemState
     public string? FoundIn { get; set; }                 // папка, где FindFile нашёл файл на этом проходе
     public string? PlannedPath { get; set; }             // куда файл будет перемещён (известно ДО перемещения: путь нужен Oracle)
     public string? ClientCode { get; set; }
-    public byte[]? Content { get; set; }                 // содержимое файла (читается один раз за проход)
+    [JsonIgnore] public byte[]? Content { get; set; }    // содержимое файла (читается один раз за проход, не сохраняется)
     public string? Sha256 { get; set; }
     public string? SignatureBase64 { get; set; }
     public string? SignatureSource { get; set; }         // "rest" | "file"

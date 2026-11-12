@@ -59,6 +59,22 @@ public sealed class CapturingNotifier : INotifier
         System.Add(subject);
         return Task.CompletedTask;
     }
+
+    public int Flushes;
+    public Task FlushAsync(CancellationToken ct) { Flushes++; return Task.CompletedTask; }
+}
+
+public sealed class CapturingMailSender : IMailSender
+{
+    public List<(string[] To, string Subject, string Body)> Sent { get; } = new();
+    public bool Throw;
+
+    public Task SendAsync(IReadOnlyList<string> to, string subject, string body, CancellationToken ct)
+    {
+        if (Throw) throw new IOException("smtp down");
+        lock (Sent) Sent.Add((to.ToArray(), subject, body));
+        return Task.CompletedTask;
+    }
 }
 
 public sealed class FakeSigner : ISignatureService
@@ -83,7 +99,7 @@ public sealed class FakeSignatureStore : ISignatureStore
     public List<(string Id, byte[] Sig)> Marked { get; } = new();
     public List<FileRecordRequest> Records { get; } = new();
 
-    public Task MarkReportSignedAsync(string recordId, byte[] signature, CancellationToken ct) { Marked.Add((recordId, signature)); return Task.CompletedTask; }
+    public Task MarkSignedAsync(string recordId, byte[] signature, CancellationToken ct) { Marked.Add((recordId, signature)); return Task.CompletedTask; }
     public Task CreateFileRecordAsync(FileRecordRequest request, CancellationToken ct) { Records.Add(request); return Task.CompletedTask; }
 }
 
@@ -102,6 +118,51 @@ public sealed class InMemoryArchive : ISignatureArchive
         var key = (r.DocType, r.SourceKey, r.Sha256);
         // как в SQL: первая подпись сохраняется, остальное обновляется
         Rows[key] = Rows.TryGetValue(key, out var old) ? r with { Signature = old.Signature, SignatureSource = old.SignatureSource } : r;
+        return Task.CompletedTask;
+    }
+}
+
+public sealed class InMemoryStateStore : IStateStore
+{
+    public Dictionary<(string, string), (ItemState State, List<string> Done, DateTime? Completed)> Rows { get; } = new();
+    public int Saves;
+    public bool ThrowOnSave;
+    public bool ThrowOnLoad;
+
+    public Task<StoredState?> LoadAsync(string docType, string sourceKey, CancellationToken ct)
+    {
+        if (ThrowOnLoad) throw new IOException("pg down");
+        // как в БД: храним сериализованную копию, а не ссылку
+        return Task.FromResult(Rows.TryGetValue((docType, sourceKey), out var r)
+            ? new StoredState(System.Text.Json.JsonSerializer.Deserialize<ItemState>(System.Text.Json.JsonSerializer.Serialize(r.State))!, r.Done.ToList(), r.Completed)
+            : null);
+    }
+
+    public Task SaveAsync(string docType, string sourceKey, ItemState state, IReadOnlyList<string> doneSteps, CancellationToken ct)
+    {
+        if (ThrowOnSave) throw new IOException("pg down");
+        Saves++;
+        Rows[(docType, sourceKey)] = (System.Text.Json.JsonSerializer.Deserialize<ItemState>(System.Text.Json.JsonSerializer.Serialize(state))!, doneSteps.ToList(), null);
+        return Task.CompletedTask;
+    }
+
+    public Task CompleteAsync(string docType, string sourceKey, CancellationToken ct)
+    {
+        var r = Rows[(docType, sourceKey)];
+        Rows[(docType, sourceKey)] = (r.State, r.Done, DateTime.UtcNow);
+        return Task.CompletedTask;
+    }
+}
+
+public sealed class RecordingJournal : IOperationJournal
+{
+    public List<OperationRecord> Records { get; } = new();
+    public bool Throw;
+
+    public Task RecordAsync(OperationRecord record, CancellationToken ct)
+    {
+        if (Throw) throw new IOException("pg down");
+        Records.Add(record);
         return Task.CompletedTask;
     }
 }

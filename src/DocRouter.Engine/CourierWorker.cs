@@ -36,29 +36,37 @@ public sealed class CourierWorker(
         catch (OperationCanceledException) { }
     }
 
-    private async Task CycleAsync(CancellationToken ct)
+    /// <summary>Один опрос. В конце (даже при сбое) уходит сводка: одно письмо на набор получателей вместо письма на каждый файл.</summary>
+    internal async Task CycleAsync(CancellationToken ct)
     {
-        var items = new List<WorkItem>();
-        foreach (var s in sources)
+        try
         {
-            try { items.AddRange(await s.DiscoverAsync(ct)); }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            var items = new List<WorkItem>();
+            foreach (var s in sources)
             {
-                log.LogError(ex, "Источник {Source} завершился ошибкой", s.Name);
-                await notifier.NotifySystemAsync($"[DocRouter] Источник {s.Name} завершился ошибкой", ex.ToString(), ct);
+                try { items.AddRange(await s.DiscoverAsync(ct)); }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    log.LogError(ex, "Источник {Source} завершился ошибкой", s.Name);
+                    await notifier.NotifySystemAsync($"[DocRouter] Источник {s.Name} завершился ошибкой", ex.ToString(), ct);
+                }
             }
+
+            var unique = items.GroupBy(i => (i.DocType, i.ExternalId)).Select(g => g.First()).ToList();
+            log.LogInformation("Опрос: документов в работе {Count}", unique.Count);
+
+            await Parallel.ForEachAsync(unique,
+                new ParallelOptions { MaxDegreeOfParallelism = options.Value.MaxParallel, CancellationToken = ct },
+                async (item, c) =>
+                {
+                    try { await runner.RunAsync(item, c); }
+                    catch (OperationCanceledException) when (c.IsCancellationRequested) { }
+                    catch (Exception ex) { log.LogError(ex, "Необработанная ошибка документа {Item}", item); }
+                });
         }
-
-        var unique = items.GroupBy(i => (i.DocType, i.ExternalId)).Select(g => g.First()).ToList();
-        log.LogInformation("Опрос: документов в работе {Count}", unique.Count);
-
-        await Parallel.ForEachAsync(unique,
-            new ParallelOptions { MaxDegreeOfParallelism = options.Value.MaxParallel, CancellationToken = ct },
-            async (item, c) =>
-            {
-                try { await runner.RunAsync(item, c); }
-                catch (OperationCanceledException) when (c.IsCancellationRequested) { }
-                catch (Exception ex) { log.LogError(ex, "Необработанная ошибка документа {Item}", item); }
-            });
+        finally
+        {
+            await notifier.FlushAsync(ct);
+        }
     }
 }

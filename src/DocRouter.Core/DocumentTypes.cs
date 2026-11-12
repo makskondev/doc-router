@@ -20,6 +20,7 @@ public sealed class DocumentType
 {
     public required string Name { get; init; }
     public required string Kind { get; init; }           // «вид» для Oracle/архива (по умолчанию = имя типа)
+    public bool Stateful { get; init; }                  // состояние сохраняется в PostgreSQL (долгие потоки с ожиданием человека)
     public ViewSourceDef? View { get; init; }
     public DirectorySourceDef? Directory { get; init; }
     public required IReadOnlyList<string> Recipients { get; init; }
@@ -40,6 +41,7 @@ public sealed class TypeBuilder(string name)
     private ViewSourceDef? _view;
     private DirectorySourceDef? _directory;
     private string? _kind;
+    private bool _stateful;
     private readonly List<string> _recipients = new();
     private readonly List<RouteStepDef> _steps = new();
 
@@ -64,6 +66,17 @@ public sealed class TypeBuilder(string name)
         EnsureNoSource();
         _directory = new DirectorySourceDef(directory, mask, withSignature, signatureSuffix,
             minAge ?? TimeSpan.FromMinutes(1), signatureTimeout);
+        return this;
+    }
+
+    /// <summary>
+    /// Долгий поток: состояние документа (папка, путь назначения, момент отправки на подпись, выполненные шаги) сохраняется в PostgreSQL
+    /// после каждого успешного шага; выполненные шаги на следующих опросах пропускаются. Нужен там, где файл перемещается в середине
+    /// цепочки и есть ожидание человека. Остальные типы остаются без состояния.
+    /// </summary>
+    public TypeBuilder Stateful()
+    {
+        _stateful = true;
         return this;
     }
 
@@ -101,6 +114,7 @@ public sealed class TypeBuilder(string name)
     {
         Name = Name,
         Kind = _kind ?? Name,
+        Stateful = _stateful,
         View = _view,
         Directory = _directory,
         Recipients = _recipients.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),

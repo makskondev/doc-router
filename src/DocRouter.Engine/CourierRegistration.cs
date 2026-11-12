@@ -15,7 +15,7 @@ public static class CourierRegistration
 
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<CourierStatus>();
-        services.AddSingleton<INotifier, EmailNotifier>();
+        services.AddSingleton<INotifier, DigestNotifier>();
         services.AddSingleton<ItemRunner>();
         services.AddSingleton<ISourcePoller, ViewSource>();
         services.AddSingleton<ISourcePoller, DirectorySource>();

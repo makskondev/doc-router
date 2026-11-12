@@ -18,7 +18,10 @@ public static class InfrastructureRegistration
         services.AddSingleton<IViewReader, OracleViewReader>();
         services.AddSingleton<ISignatureStore, OracleSignatureStore>();
         services.AddSingleton<IMailSender, SmtpMailSender>();
+        services.AddSingleton<PgDb>();
         services.AddSingleton<ISignatureArchive, PgSignatureArchive>();
+        services.AddSingleton<IStateStore, PgStateStore>();
+        services.AddSingleton<IOperationJournal, PgOperationJournal>();
 
         var timeout = cfg.GetSection("SignatureService").GetValue<TimeSpan?>("Timeout") ?? TimeSpan.FromSeconds(60);
         services.AddHttpClient<ISignatureService, RestSignatureService>(c => c.Timeout = timeout);

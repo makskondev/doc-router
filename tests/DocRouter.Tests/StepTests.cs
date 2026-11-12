@@ -305,17 +305,17 @@ public class StepTests
 
     // ---------- Oracle ----------
     [Fact]
-    public async Task MarkReportSigned_calls_single_procedure_with_record_id_and_signature()
+    public async Task MarkSigned_calls_single_procedure_with_record_id_and_signature()
     {
         var store = new FakeSignatureStore();
         var ctx = Ctx.Make(item: Ctx.Item(id: "R-5"));
         ctx.State.SignatureBase64 = Convert.ToBase64String([4, 2]);
 
-        Assert.IsType<NextResult>(await new MarkReportSigned(store).ExecuteAsync(ctx, default));
+        Assert.IsType<NextResult>(await new MarkSigned(store).ExecuteAsync(ctx, default));
         var m = Assert.Single(store.Marked);
         Assert.Equal("R-5", m.Id);
         Assert.Equal(new byte[] { 4, 2 }, m.Sig);
-        Assert.IsType<FailResult>(await new MarkReportSigned(store).ExecuteAsync(Ctx.Make(), default));   // подписи нет
+        Assert.IsType<FailResult>(await new MarkSigned(store).ExecuteAsync(Ctx.Make(), default));   // подписи нет
     }
 
     [Fact]
@@ -356,5 +356,162 @@ public class StepTests
         Assert.IsType<NextResult>(await step.ExecuteAsync(ctx, default));
         Assert.False(fs.Has(sig));
         Assert.IsType<NextResult>(await step.ExecuteAsync(ctx, default));
+    }
+}
+
+public class ManualSigningStepTests
+{
+    private const string Docs = @"\\fd\brok\docs";
+    private const string ToSign = @"\\fd\sign_proc\to_sign\brok";
+    private const string Signed = @"\\fd\sign_proc\was_signed\brok";
+    private static readonly byte[] Pdf = "%PDF-1.7 app"u8.ToArray();
+
+    private static TestTime Clock() => new(new DateTime(2026, 11, 11, 12, 0, 0, DateTimeKind.Utc));
+
+    // ---------- SendToManualSigning ----------
+    [Fact]
+    public async Task Send_moves_file_to_manual_signing_folder_and_remembers_the_moment()
+    {
+        var fs = new InMemoryFileStore();
+        var src = Paths.Combine(Docs, "app.pdf");
+        fs.Add(src, Pdf);
+        var time = Clock();
+        var ctx = Ctx.Make(fileName: "app.pdf", foundIn: Docs, currentPath: src);
+
+        Assert.IsType<NextResult>(await new SendToManualSigning(fs, time) { From = Docs, To = ToSign }.ExecuteAsync(ctx, default));
+
+        Assert.False(fs.Has(src));
+        Assert.True(fs.Has(Paths.Combine(ToSign, "app.pdf")));
+        Assert.Equal(ToSign, ctx.State.FoundIn);
+        Assert.Equal(time.Now.ToString("O"), ctx.State.Extra[SendToManualSigning.SentAtKey]);
+    }
+
+    [Fact]
+    public async Task Send_is_safe_to_repeat_when_file_is_already_in_manual_signing_folder()
+    {
+        var fs = new InMemoryFileStore();
+        var there = Paths.Combine(ToSign, "app.pdf");
+        fs.Add(there, Pdf);
+        var ctx = Ctx.Make(fileName: "app.pdf", foundIn: ToSign, currentPath: there);
+
+        Assert.IsType<NextResult>(await new SendToManualSigning(fs, Clock()) { From = Docs, To = ToSign }.ExecuteAsync(ctx, default));
+        Assert.True(ctx.State.Extra.ContainsKey(SendToManualSigning.SentAtKey));            // момент зафиксирован после сбоя
+        Assert.True(fs.Has(there));
+    }
+
+    [Fact]
+    public async Task Send_keeps_original_sent_moment_on_repeat()
+    {
+        var fs = new InMemoryFileStore();
+        var there = Paths.Combine(ToSign, "app.pdf");
+        fs.Add(there, Pdf);
+        var ctx = Ctx.Make(fileName: "app.pdf", foundIn: ToSign, currentPath: there);
+        ctx.State.Extra[SendToManualSigning.SentAtKey] = "2026-11-10T08:00:00.0000000Z";
+
+        await new SendToManualSigning(fs, Clock()) { From = Docs, To = ToSign }.ExecuteAsync(ctx, default);
+        Assert.Equal("2026-11-10T08:00:00.0000000Z", ctx.State.Extra[SendToManualSigning.SentAtKey]);
+    }
+
+    [Fact]
+    public async Task Send_never_overwrites_a_file_waiting_in_manual_signing_folder()
+    {
+        var fs = new InMemoryFileStore();
+        var src = Paths.Combine(Docs, "app.pdf");
+        fs.Add(src, Pdf);
+        fs.Add(Paths.Combine(ToSign, "app.pdf"), [9]);              // чужой файл с тем же именем ждёт подписи
+        var ctx = Ctx.Make(fileName: "app.pdf", foundIn: Docs, currentPath: src);
+
+        Assert.IsType<FailResult>(await new SendToManualSigning(fs, Clock()) { From = Docs, To = ToSign }.ExecuteAsync(ctx, default));
+        Assert.True(fs.Has(src));
+        Assert.Equal(new byte[] { 9 }, fs.Get(Paths.Combine(ToSign, "app.pdf")));
+    }
+
+    [Fact]
+    public async Task Send_fails_on_unexpected_folder_or_missing_settings()
+    {
+        var fs = new InMemoryFileStore();
+        Assert.IsType<FailResult>(await new SendToManualSigning(fs, Clock()) { From = Docs, To = ToSign }
+            .ExecuteAsync(Ctx.Make(foundIn: Signed, currentPath: "x"), default));
+        Assert.IsType<FailResult>(await new SendToManualSigning(fs, Clock()).ExecuteAsync(Ctx.Make(foundIn: Docs), default));
+    }
+
+    // ---------- WaitForManualSignature ----------
+    private static WaitForManualSignature Wait(InMemoryFileStore fs, TestTime time) =>
+        new(fs, time) { Signed = Signed, Timeout = TimeSpan.FromHours(24), StableFor = TimeSpan.FromSeconds(30) };
+
+    private static StepContext Waiting(TestTime time, TimeSpan sentAgo)
+    {
+        var ctx = Ctx.Make(fileName: "app.pdf", foundIn: ToSign, currentPath: Paths.Combine(ToSign, "app.pdf"));
+        ctx.State.Extra[SendToManualSigning.SentAtKey] = (time.Now - sentAgo).ToString("O");
+        return ctx;
+    }
+
+    [Fact]
+    public async Task Wait_nothing_yet_waits_quietly_within_24_hours()
+    {
+        var time = Clock();
+        Assert.IsType<WaitResult>(await Wait(new InMemoryFileStore(), time).ExecuteAsync(Waiting(time, TimeSpan.FromHours(3)), default));
+    }
+
+    [Fact]
+    public async Task Wait_fails_after_24_hours_counted_from_the_sent_moment_not_from_file_time()
+    {
+        var time = Clock();
+        var fs = new InMemoryFileStore();
+        fs.Add(Paths.Combine(ToSign, "app.pdf"), Pdf, time.Now);          // свежий mtime файла не должен сбрасывать отсчёт
+
+        Assert.IsType<FailResult>(await Wait(fs, time).ExecuteAsync(Waiting(time, TimeSpan.FromHours(25)), default));
+    }
+
+    [Fact]
+    public async Task Wait_with_stable_signed_pair_moves_on_and_switches_to_signed_file()
+    {
+        var time = Clock();
+        var fs = new InMemoryFileStore();
+        var doc = Paths.Combine(Signed, "app.pdf");
+        fs.Add(doc, Pdf, time.Now.AddMinutes(-5));
+        fs.Add(doc + ".sig", [1], time.Now.AddMinutes(-5));
+        var ctx = Waiting(time, TimeSpan.FromHours(2));
+        ctx.State.Content = [1, 2, 3];
+
+        Assert.IsType<NextResult>(await Wait(fs, time).ExecuteAsync(ctx, default));
+        Assert.Equal(doc, ctx.State.CurrentPath);
+        Assert.Equal(Signed, ctx.State.FoundIn);
+        Assert.Equal(doc + ".sig", ctx.State.Extra["sigPath"]);
+        Assert.Null(ctx.State.Content);                                    // содержимое подписанного файла будет прочитано заново
+    }
+
+    [Fact]
+    public async Task Wait_arrived_signed_pair_wins_even_after_the_24h_deadline()
+    {
+        var time = Clock();
+        var fs = new InMemoryFileStore();
+        var doc = Paths.Combine(Signed, "app.pdf");
+        fs.Add(doc, Pdf, time.Now.AddMinutes(-5));
+        fs.Add(doc + ".sig", [1], time.Now.AddMinutes(-5));
+
+        Assert.IsType<NextResult>(await Wait(fs, time).ExecuteAsync(Waiting(time, TimeSpan.FromHours(40)), default));
+    }
+
+    [Fact]
+    public async Task Wait_fresh_or_incomplete_pair_keeps_waiting()
+    {
+        var time = Clock();
+        var fs = new InMemoryFileStore();
+        var doc = Paths.Combine(Signed, "app.pdf");
+        fs.Add(doc, Pdf, time.Now.AddMinutes(-5));                         // подписи ещё нет
+        Assert.IsType<WaitResult>(await Wait(fs, time).ExecuteAsync(Waiting(time, TimeSpan.FromHours(1)), default));
+
+        fs.Add(doc + ".sig", [1], time.Now.AddSeconds(-5));                // подпись ещё дописывается
+        Assert.IsType<WaitResult>(await Wait(fs, time).ExecuteAsync(Waiting(time, TimeSpan.FromHours(1)), default));
+    }
+
+    [Fact]
+    public async Task Wait_without_known_sent_moment_starts_the_clock_instead_of_failing()
+    {
+        var time = Clock();
+        var ctx = Ctx.Make(fileName: "app.pdf", foundIn: ToSign);
+        Assert.IsType<WaitResult>(await Wait(new InMemoryFileStore(), time).ExecuteAsync(ctx, default));
+        Assert.True(ctx.State.Extra.ContainsKey(SendToManualSigning.SentAtKey));
     }
 }

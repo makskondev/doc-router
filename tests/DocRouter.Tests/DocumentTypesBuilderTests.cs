@@ -121,7 +121,8 @@ public class DocumentTypesBuilderTests
     private static DirectoriesOptions Dirs() => new()
     {
         BrokRep = @"\\fd\brok_rep", BrokRepEmail = @"\\fd\brok_rep\email", SignedDocs = @"\\fd\signed_docs",
-        DepoReports = @"\\fd\depo_reports", WasSignedDepo = @"\\fd\sign_proc\was_signed\depo", WasSignedBrok = @"\\fd\sign_proc\was_signed\brok"
+        DepoReports = @"\\fd\depo_reports", WasSignedDepo = @"\\fd\sign_proc\was_signed\depo", WasSignedBrok = @"\\fd\sign_proc\was_signed\brok",
+        BrokDocs = @"\\fd\brok\docs", BrokToSign = @"\\fd\sign_proc\to_sign\brok", CorpSignedDoc = @"\\fd\corp\signed_doc"
     };
 
     private static DocumentTypeRegistry Real() =>
@@ -143,7 +144,7 @@ public class DocumentTypesBuilderTests
         Assert.True(Real().TryGet("BROK_REP", out var t));
         Assert.Equal("report_log_vw", t.View!.View);
         Assert.Null(t.View.TypeColumn);
-        Assert.Equal(new[] { "FindFile", "RestSign", "VerifySignature", "ArchiveSignature", "MarkReportSigned" }, t.Steps.Select(s => s.Name));
+        Assert.Equal(new[] { "FindFile", "RestSign", "VerifySignature", "ArchiveSignature", "MarkSigned" }, t.Steps.Select(s => s.Name));
         Assert.DoesNotContain(t.Steps, s => s.StepType == typeof(MoveFile));
         Assert.Equal(new[] { "b@x" }, t.Recipients);
     }
@@ -166,7 +167,6 @@ public class DocumentTypesBuilderTests
     [InlineData("DEPO_NOTICE")]
     [InlineData("DEPO_APPLICATION")]
     [InlineData("BROK_NOTICE")]
-    [InlineData("BROK_APPLICATION")]
     public void Families_3_and_4_documents_arrive_with_sig_wait_24h_and_move_last(string type)
     {
         Assert.True(Real().TryGet(type, out var t));
@@ -208,5 +208,59 @@ public class DocumentTypesBuilderTests
         var depoDocs = reg.All.Where(t => t.Directory is not null && Paths.SameDir(t.Directory.Directory, Dirs().WasSignedDepo)).ToList();
         Assert.Equal(2, depoDocs.Count);                                    // извещения и заявления делят одну папку
         Assert.All(depoDocs, t => Assert.False(string.IsNullOrWhiteSpace(t.Directory!.Mask)));
+    }
+
+    [Fact]
+    public void Brok_application_is_the_only_stateful_type_and_comes_from_doc_to_sign_vw()
+    {
+        var reg = Real();
+        Assert.True(reg.TryGet("BROK_APPLICATION", out var t));
+        Assert.True(t.Stateful);
+        Assert.Equal("doc_to_sign_vw", t.View!.View);
+        Assert.Null(t.View.TypeColumn);
+        Assert.Null(t.Directory);                                    // из was_signed\brok больше не читается
+        Assert.Equal(new[] { "BROK_APPLICATION" }, reg.All.Where(x => x.Stateful).Select(x => x.Name));
+    }
+
+    [Fact]
+    public void Brok_application_chain_sends_to_manual_signing_waits_and_calls_oracle_LAST()
+    {
+        Assert.True(Real().TryGet("BROK_APPLICATION", out var t));
+        Assert.Equal(new[]
+        {
+            "FindFile", "SendToManualSigning", "WaitForManualSignature", "ReadSignatureFile", "VerifySignature",
+            "PlanTargetPath", "ArchiveSignature", "MoveFile", "DeleteFile", "MarkSigned"
+        }, t.Steps.Select(s => s.Name));
+        Assert.Equal(typeof(MarkSigned), t.Steps[^1].StepType);      // запись исчезает из вью только после всего остального
+    }
+
+    [Fact]
+    public void Brok_application_folders_are_the_ones_from_the_process_description()
+    {
+        var dirs = Dirs();
+        Assert.True(Real().TryGet("BROK_APPLICATION", out var t));
+
+        var find = new FindFile(new InMemoryFileStore());
+        t.Steps[0].Configure!(find);
+        Assert.Equal(new[] { dirs.WasSignedBrok, dirs.BrokToSign, dirs.BrokDocs }, find.In);          // от продвинутой к начальной
+
+        var send = new SendToManualSigning(new InMemoryFileStore(), TimeProvider.System);
+        t.Steps[1].Configure!(send);
+        Assert.Equal((dirs.BrokDocs, dirs.BrokToSign), (send.From, send.To));
+
+        var wait = new WaitForManualSignature(new InMemoryFileStore(), TimeProvider.System);
+        t.Steps[2].Configure!(wait);
+        Assert.Equal((dirs.WasSignedBrok, TimeSpan.FromHours(24)), (wait.Signed, wait.Timeout));
+
+        var plan = new PlanTargetPath(new InMemoryFileStore());
+        t.Steps.Single(x => x.StepType == typeof(PlanTargetPath)).Configure!(plan);
+        Assert.Equal(dirs.CorpSignedDoc, plan.To);                                                     // не signed_docs
+        Assert.NotEqual(dirs.SignedDocs, plan.To);
+    }
+
+    [Fact]
+    public void Stateless_types_stay_stateless()
+    {
+        Assert.All(Real().All.Where(t => t.Name != "BROK_APPLICATION"), t => Assert.False(t.Stateful));
     }
 }

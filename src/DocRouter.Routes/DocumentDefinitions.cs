@@ -6,8 +6,9 @@ namespace DocRouter.Routes;
 /// <summary>
 /// Единственное место, где разработчик описывает типы документов: откуда приходят, кому писать об ошибках, какие шаги проходят.
 /// Рабочие папки (dirs) и группы адресатов (mail) приходят из переменных окружения Dirs__* и Mail__* и передаются в шаги значениями.
-/// Шаги выполняются с первого на КАЖДОМ опросе: FindFile определяет, где файл сейчас, подпись при повторе берётся из архива PostgreSQL,
-/// а перемещение — последнее действие (триггером служит сам файл), поэтому повтор после сбоя безопасен.
+/// Короткие типы — без состояния: шаги выполняются с первого на КАЖДОМ опросе, FindFile определяет, где файл сейчас, подпись при повторе
+/// берётся из архива PostgreSQL, а перемещение — последнее действие (триггером служит сам файл), поэтому повтор после сбоя безопасен.
+/// Долгий тип с ожиданием человека (BROK_APPLICATION) помечен .Stateful(): его состояние хранится в PostgreSQL.
 /// </summary>
 public static class DocumentDefinitions
 {
@@ -26,7 +27,7 @@ public static class DocumentDefinitions
             .Step<RestSign>()
             .Step<VerifySignature>()
             .Step<ArchiveSignature>(s => { s.ClientField = "CLIENT_ID"; s.KindField = "REPORT_TYPE"; })
-            .Step<MarkReportSigned>();                           // подпись + отметка «подписан» одной процедурой
+            .Step<MarkSigned>();                           // подпись + отметка «подписан» одной процедурой
 
         // ===== 2. ДЕПОЗИТАРНЫЕ ОТЧЁТЫ: появляются в папке, вид — по окончанию имени, код клиента — из имени =====
         void DepoReport(string type, string kind, string mask) => b.Type(type).Kind(kind)
@@ -62,7 +63,25 @@ public static class DocumentDefinitions
         SignedDoc("DEPO_NOTICE", "извещение", dirs.WasSignedDepo, "*извещение*", mail.Depo);
         SignedDoc("DEPO_APPLICATION", "заявление", dirs.WasSignedDepo, "*заявление*", mail.Depo);
         SignedDoc("BROK_NOTICE", "извещение", dirs.WasSignedBrok, "*извещение*", mail.Brokers);
-        SignedDoc("BROK_APPLICATION", "заявление", dirs.WasSignedBrok, "*заявление*", mail.Brokers);
+
+        // ===== БРОКЕРСКОЕ ЗАЯВЛЕНИЕ НА РУЧНОЕ ПОДПИСАНИЕ: долгий поток с состоянием =====
+        // Запись в doc_to_sign_vw (ID документа, имя файла, код клиента) остаётся во вью, пока всё не закончится, поэтому вью — единственный
+        // триггер, а «где документ и что уже сделано» хранится в PostgreSQL (document_state). Процедура Oracle — ПОСЛЕДНИМ шагом:
+        // запись исчезает из вью только когда файл подписан, проверен, заархивирован и перемещён.
+        // Колонки вью (условные): ID, FILE_NAME, CLIENT_ID
+        b.Type("BROK_APPLICATION").Kind("заявление").Stateful()
+            .FromView("doc_to_sign_vw", idColumn: "ID", nameColumn: "FILE_NAME", typeColumn: null)
+            .NotifyTo(mail.Brokers)
+            .Step<FindFile>(s => s.In = [dirs.WasSignedBrok, dirs.BrokToSign, dirs.BrokDocs])   // от продвинутой стадии к начальной
+            .Step<SendToManualSigning>(s => { s.From = dirs.BrokDocs; s.To = dirs.BrokToSign; })
+            .Step<WaitForManualSignature>(s => { s.Signed = dirs.WasSignedBrok; s.Timeout = TimeSpan.FromHours(24); })
+            .Step<ReadSignatureFile>()
+            .Step<VerifySignature>()
+            .Step<PlanTargetPath>(s => s.To = dirs.CorpSignedDoc)
+            .Step<ArchiveSignature>(s => s.ClientField = "CLIENT_ID")
+            .Step<MoveFile>()
+            .Step<DeleteFile>()                                  // .sig
+            .Step<MarkSigned>();                                 // процедура Oracle (ID + подпись)
 
         return b.Build();
     }

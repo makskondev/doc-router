@@ -8,7 +8,8 @@ public class ConfigCheckTests
     private static DirectoriesOptions Dirs() => new()
     {
         BrokRep = @"\\fd\brok_rep", BrokRepEmail = @"\\fd\brok_rep\email", SignedDocs = @"\\fd\signed_docs",
-        DepoReports = @"\\fd\depo_reports", WasSignedDepo = @"\\fd\w\depo", WasSignedBrok = @"\\fd\w\brok"
+        DepoReports = @"\\fd\depo_reports", WasSignedDepo = @"\\fd\w\depo", WasSignedBrok = @"\\fd\w\brok",
+        BrokDocs = @"\\fd\brok\docs", BrokToSign = @"\\fd\to_sign\brok", CorpSignedDoc = @"\\fd\corp\signed_doc"
     };
 
     private static MailOptions Mail() => new() { Default = "a@x", Brokers = "b@x", Depo = "c@x" };

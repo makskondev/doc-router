@@ -97,7 +97,7 @@ public sealed record FileRecordRequest(string FileName, string Kind, string? Cli
 public interface ISignatureStore
 {
     /// <summary>Семейство 1: одна процедура — сохраняет подпись и ставит отметку «подписан» (запись исчезает из view).</summary>
-    Task MarkReportSignedAsync(string recordId, byte[] signature, CancellationToken ct);
+    Task MarkSignedAsync(string recordId, byte[] signature, CancellationToken ct);
 
     /// <summary>Семейства 2-4: создаёт запись о файле с подписью. Идемпотентность повторного вызова обеспечивает процедура.</summary>
     Task CreateFileRecordAsync(FileRecordRequest request, CancellationToken ct);
@@ -120,16 +120,52 @@ public interface ISignatureArchive
     Task UpsertAsync(ArchiveRecord record, CancellationToken ct);
 }
 
+// ---------- PostgreSQL: состояние долгих потоков ----------
+/// <summary>Сохранённое состояние документа: данные прохода и список уже выполненных шагов. CompletedAtUtc ≠ null — цепочка была завершена.</summary>
+public sealed record StoredState(ItemState State, IReadOnlyList<string> DoneSteps, DateTime? CompletedAtUtc);
+
+/// <summary>Хранилище состояния ТОЛЬКО для типов с .Stateful(). Остальные потоки остаются без состояния.</summary>
+public interface IStateStore
+{
+    Task<StoredState?> LoadAsync(string docType, string sourceKey, CancellationToken ct);
+    /// <summary>Сохраняет состояние (и снимает отметку «завершён»).</summary>
+    Task SaveAsync(string docType, string sourceKey, ItemState state, IReadOnlyList<string> doneSteps, CancellationToken ct);
+    Task CompleteAsync(string docType, string sourceKey, CancellationToken ct);
+}
+
+// ---------- PostgreSQL: журнал операций (все типы) ----------
+public enum OperationOutcome { Waiting, Failed, Completed }
+
+/// <summary>Итог одного прохода по документу: ждёт, упал на шаге или завершён.</summary>
+public sealed record OperationRecord(
+    string DocType, string SourceKey, string FileName, string Kind, string? ClientCode,
+    OperationOutcome Outcome, string? Step, string? Message, string? TargetPath);
+
+/// <summary>
+/// Журнал операций: когда документ впервые замечен, где остановился, сколько неудачных попыток, чем закончился. Только для наблюдаемости:
+/// на ход обработки не влияет, сбой записи в журнал логируется и обработку не ломает.
+/// </summary>
+public interface IOperationJournal
+{
+    Task RecordAsync(OperationRecord record, CancellationToken ct);
+}
+
 // ---------- письма ----------
 public interface IMailSender
 {
     Task SendAsync(IReadOnlyList<string> to, string subject, string body, CancellationToken ct);
 }
 
+/// <summary>
+/// Уведомления об ошибках собираются в течение опроса и уходят одной сводкой: FlushAsync в конце опроса отправляет
+/// по одному письму на набор получателей — со всеми необработанными документами и причиной по каждому.
+/// </summary>
 public interface INotifier
 {
-    /// <summary>Письмо о неудаче по документу (адресаты: группа типа из NotifyTo + Mail__Default). Без ограничения частоты: на каждую неудачу.</summary>
+    /// <summary>Необработанный документ (получатели: группа типа из NotifyTo + Mail__Default). Только накапливает — письмо уйдёт в FlushAsync.</summary>
     Task NotifyFailureAsync(WorkItem item, string step, string reason, CancellationToken ct);
-    /// <summary>Системная ошибка (источник недоступен, некорректная запись и т.п.) — адресатам Mail__Default.</summary>
+    /// <summary>Системная ошибка (источник недоступен, некорректная запись и т.п.) — попадёт в сводку получателям Mail__Default.</summary>
     Task NotifySystemAsync(string subject, string body, CancellationToken ct);
+    /// <summary>Отправляет накопленное за опрос (если оно есть) и очищает накопитель.</summary>
+    Task FlushAsync(CancellationToken ct);
 }

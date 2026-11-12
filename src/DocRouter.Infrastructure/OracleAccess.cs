@@ -52,7 +52,7 @@ public sealed partial class OracleViewReader(IOptions<OracleOptions> options) : 
 /// </summary>
 public sealed class OracleSignatureStore(IOptions<OracleOptions> options) : ISignatureStore
 {
-    public Task MarkReportSignedAsync(string recordId, byte[] signature, CancellationToken ct) =>
+    public Task MarkSignedAsync(string recordId, byte[] signature, CancellationToken ct) =>
         CallAsync(options.Value.MarkSignedProcedure, cmd =>
         {
             cmd.Parameters.Add("P_ID", OracleDbType.Varchar2).Value = recordId;
